@@ -239,8 +239,9 @@ export function Layout({
       {/* Desktop Sidebar */}
       <aside className="no-print hidden lg:flex lg:flex-col lg:w-64 lg:fixed lg:inset-y-0 bg-white border-r border-slate-200 z-30">
         <div className="h-16 flex items-center px-6 border-b border-slate-200">
-          <span className="font-display text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap">
-            CostFlow F&amp;B
+          <span className="font-display text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap flex items-center gap-2">
+            <span aria-hidden="true">🍄</span>
+            <span>Con Bà Bảy Food</span>
           </span>
         </div>
 
@@ -339,8 +340,9 @@ export function Layout({
           />
           <aside className="relative w-72 max-w-[85vw] bg-white h-full flex flex-col border-r border-slate-200 z-10">
             <div className="h-16 flex items-center justify-between px-5 border-b border-slate-200">
-              <span className="font-display text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap">
-                CostFlow F&amp;B
+              <span className="font-display text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap flex items-center gap-2">
+                <span aria-hidden="true">🍄</span>
+                <span>Con Bà Bảy Food</span>
               </span>
               <button
                 type="button"
