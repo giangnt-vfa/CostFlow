@@ -226,45 +226,53 @@ export async function replaceWorkspaceInFirestore(
   if (!db) return;
   const userPath = `users/${uid}`;
   try {
-    const batch = writeBatch(db);
     const userRef = doc(db, 'users', uid);
     const snap = await getDoc(userRef);
+
+    const ops: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
 
     if (snap.exists()) {
       const updateFields = buildWorkspacePayload(uid, seedData.overheadConfig, true, false);
       delete updateFields.ownerId;
-      batch.update(userRef, updateFields);
+      ops.push((b) => b.update(userRef, updateFields));
     } else {
-      batch.set(userRef, buildWorkspacePayload(uid, seedData.overheadConfig, true, true));
+      ops.push((b) => b.set(userRef, buildWorkspacePayload(uid, seedData.overheadConfig, true, true)));
     }
 
     for (const id of existingIds.catalogIds) {
-      batch.delete(doc(db, 'users', uid, 'catalog', sanitizeId(id)));
+      ops.push((b) => b.delete(doc(db!, 'users', uid, 'catalog', sanitizeId(id))));
     }
     for (const id of existingIds.fixedCostIds) {
-      batch.delete(doc(db, 'users', uid, 'fixedCosts', sanitizeId(id)));
+      ops.push((b) => b.delete(doc(db!, 'users', uid, 'fixedCosts', sanitizeId(id))));
     }
     for (const id of existingIds.menuIds) {
-      batch.delete(doc(db, 'users', uid, 'menuItems', sanitizeId(id)));
+      ops.push((b) => b.delete(doc(db!, 'users', uid, 'menuItems', sanitizeId(id))));
     }
 
     for (const item of seedData.catalog) {
       const id = sanitizeId(item.id);
       const { id: _ignore, ...rest } = item;
-      batch.set(doc(db, 'users', uid, 'catalog', id), buildCatalogPayload(uid, rest, true));
+      ops.push((b) => b.set(doc(db!, 'users', uid, 'catalog', id), buildCatalogPayload(uid, rest, true)));
     }
     for (const fc of seedData.fixedCosts) {
       const id = sanitizeId(fc.id);
       const { id: _ignore, ...rest } = fc;
-      batch.set(doc(db, 'users', uid, 'fixedCosts', id), buildFixedCostPayload(uid, rest, true));
+      ops.push((b) => b.set(doc(db!, 'users', uid, 'fixedCosts', id), buildFixedCostPayload(uid, rest, true)));
     }
     for (const menu of seedData.menuItems) {
       const id = sanitizeId(menu.id);
       const { id: _ignore, ...rest } = menu;
-      batch.set(doc(db, 'users', uid, 'menuItems', id), buildMenuItemPayload(uid, rest, true));
+      ops.push((b) => b.set(doc(db!, 'users', uid, 'menuItems', id), buildMenuItemPayload(uid, rest, true)));
     }
 
-    await batch.commit();
+    const CHUNK_SIZE = 400;
+    for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
+      const batch = writeBatch(db);
+      for (const applyOp of ops.slice(i, i + CHUNK_SIZE)) {
+        applyOp(batch);
+      }
+      await batch.commit();
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, userPath);
   }

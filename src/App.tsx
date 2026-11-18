@@ -164,6 +164,8 @@ export default function App() {
         open={firebaseGuideOpen}
         onClose={() => setFirebaseGuideOpen(false)}
         isConfigured={store.isFirebaseConfigured}
+        projectId={store.firebaseProjectId}
+        databaseId={store.firebaseDatabaseId}
       />
     </>
   );

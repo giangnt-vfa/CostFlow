@@ -1,6 +1,12 @@
 import { FirebaseApp, initializeApp } from 'firebase/app';
 import { Auth, GoogleAuthProvider, getAuth } from 'firebase/auth';
-import { Firestore, doc, getDocFromServer, getFirestore } from 'firebase/firestore';
+import {
+  Firestore,
+  doc,
+  getDocFromServer,
+  getFirestore,
+  initializeFirestore,
+} from 'firebase/firestore';
 
 export interface FirebaseAppletConfig {
   apiKey: string;
@@ -64,9 +70,17 @@ let googleProvider: GoogleAuthProvider | null = null;
 
 if (resolvedFirebaseConfig) {
   app = initializeApp(resolvedFirebaseConfig);
-  db = resolvedFirebaseConfig.firestoreDatabaseId
-    ? getFirestore(app, resolvedFirebaseConfig.firestoreDatabaseId)
-    : getFirestore(app);
+  try {
+    db = initializeFirestore(
+      app,
+      { experimentalAutoDetectLongPolling: true },
+      resolvedFirebaseConfig.firestoreDatabaseId
+    );
+  } catch {
+    db = resolvedFirebaseConfig.firestoreDatabaseId
+      ? getFirestore(app, resolvedFirebaseConfig.firestoreDatabaseId)
+      : getFirestore(app);
+  }
   auth = getAuth(app);
   googleProvider = new GoogleAuthProvider();
   googleProvider.setCustomParameters({ prompt: 'select_account' });
@@ -126,13 +140,39 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
+let currentConnectionWarning: string | null = null;
+const connectionListeners = new Set<(warning: string | null) => void>();
+
+export function subscribeConnectionWarning(
+  listener: (warning: string | null) => void
+): () => void {
+  connectionListeners.add(listener);
+  listener(currentConnectionWarning);
+  return () => {
+    connectionListeners.delete(listener);
+  };
+}
+
+function setConnectionWarning(warning: string | null) {
+  currentConnectionWarning = warning;
+  for (const listener of connectionListeners) {
+    listener(warning);
+  }
+}
+
 async function testConnection() {
-  if (!db) return;
+  if (!db || !resolvedFirebaseConfig) return;
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
+    setConnectionWarning(null);
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error('Please check your Firebase configuration.');
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes('the client is offline') || msg.includes('unavailable')) {
+      const dbName = resolvedFirebaseConfig.firestoreDatabaseId || '(default)';
+      const projectId = resolvedFirebaseConfig.projectId;
+      const friendly = `Chưa kết nối được tới Firestore của dự án "${projectId}" (database "${dbName}"). Hãy kiểm tra trong Firebase Console xem bạn đã tạo Firestore Database (${dbName}) ở chế độ Native chưa, hoặc kiểm tra kết nối mạng.`;
+      console.warn(friendly);
+      setConnectionWarning(friendly);
     }
   }
 }

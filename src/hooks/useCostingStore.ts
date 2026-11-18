@@ -7,7 +7,13 @@ import {
   INITIAL_MENU_ITEMS,
   INITIAL_OVERHEAD_CONFIG,
 } from '../data/initialData';
-import { auth, googleProvider, isFirebaseConfigured } from '../firebase';
+import {
+  auth,
+  googleProvider,
+  isFirebaseConfigured,
+  resolvedFirebaseConfig,
+  subscribeConnectionWarning,
+} from '../firebase';
 import { CatalogItem, FixedCostItem, MenuItem, OverheadConfig } from '../types/costing';
 import {
   buildCatalogPayload,
@@ -108,6 +114,15 @@ export function useCostingStore() {
     }
   }, [workspace]);
 
+  // Firebase connection health warning (e.g. Firestore DB not created yet)
+  useEffect(() => {
+    return subscribeConnectionWarning((warning) => {
+      if (warning) {
+        setSyncError((prev) => prev || warning);
+      }
+    });
+  }, []);
+
   // Firebase Auth listener
   useEffect(() => {
     if (!auth) {
@@ -120,7 +135,6 @@ export function useCostingStore() {
       setAuthReady(true);
       if (!nextUser) {
         setSyncStatus('local');
-        setSyncError(null);
       }
     });
     return () => unsub();
@@ -194,7 +208,19 @@ export function useCostingStore() {
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err) {
-      setSyncError(err instanceof Error ? err.message : 'Đăng nhập Google thất bại.');
+      const code = (err as { code?: string })?.code || '';
+      if (code === 'auth/unauthorized-domain') {
+        const host = typeof window !== 'undefined' ? window.location.hostname : '';
+        setSyncError(
+          `Tên miền "${host}" chưa được thêm vào Authorized domains trong Firebase Authentication → Settings.`
+        );
+      } else if (code === 'auth/operation-not-allowed') {
+        setSyncError('Bạn chưa bật nhà cung cấp Google trong Firebase Authentication → Sign-in method.');
+      } else if (code === 'auth/popup-blocked') {
+        setSyncError('Trình duyệt đang chặn cửa sổ bật lên (Popup) đăng nhập Google. Hãy cho phép Popup và thử lại.');
+      } else if (code !== 'auth/popup-closed-by-user') {
+        setSyncError(err instanceof Error ? err.message : 'Đăng nhập Google thất bại.');
+      }
     }
   }, []);
 
@@ -576,6 +602,8 @@ export function useCostingStore() {
     menuItems: workspace.menuItems,
     // Firebase auth & sync state
     isFirebaseConfigured,
+    firebaseProjectId: resolvedFirebaseConfig?.projectId || null,
+    firebaseDatabaseId: resolvedFirebaseConfig?.firestoreDatabaseId || '(default)',
     user,
     authReady,
     syncStatus,
