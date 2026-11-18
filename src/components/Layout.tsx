@@ -1,15 +1,24 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import type { User } from 'firebase/auth';
 import {
+  AlertTriangle,
   BarChart3,
   BookOpen,
   Building2,
   Calculator,
+  Cloud,
+  CloudOff,
+  HelpCircle,
+  LogIn,
+  LogOut,
   Menu as MenuIcon,
   Package,
   Plus,
   RotateCcw,
+  UploadCloud,
   X,
 } from 'lucide-react';
+import type { CloudSyncStatus } from '../hooks/useCostingStore';
 import { WorkspaceTab } from '../types/costing';
 import { formatVND } from '../utils/formatters';
 
@@ -22,6 +31,14 @@ interface LayoutProps {
   overheadPerUnit: number;
   menuCount: number;
   catalogCount: number;
+  isFirebaseConfigured: boolean;
+  user: User | null;
+  syncStatus: CloudSyncStatus;
+  syncError: string | null;
+  onSignInGoogle: () => void;
+  onSignOut: () => void;
+  onSyncLocalToCloud: () => void;
+  onOpenFirebaseGuide: () => void;
   children: React.ReactNode;
 }
 
@@ -72,10 +89,24 @@ export function Layout({
   overheadPerUnit,
   menuCount,
   catalogCount,
+  isFirebaseConfigured,
+  user,
+  syncStatus,
+  syncError,
+  onSignInGoogle,
+  onSignOut,
+  onSyncLocalToCloud,
+  onOpenFirebaseGuide,
   children,
 }: LayoutProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [confirmPushCloud, setConfirmPushCloud] = useState(false);
+  const [dismissedError, setDismissedError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDismissedError(null);
+  }, [syncError]);
 
   const currentNav = NAV_ITEMS.find((n) => n.id === activeTab) || NAV_ITEMS[0];
 
@@ -83,6 +114,123 @@ export function Layout({
     onSelectTab(id);
     setMobileMenuOpen(false);
   };
+
+  const syncLabel = !isFirebaseConfigured
+    ? 'Lưu cục bộ (Local)'
+    : !user
+      ? 'Chưa đăng nhập Cloud'
+      : syncStatus === 'connecting'
+        ? 'Đang đồng bộ Firestore...'
+        : syncStatus === 'error'
+          ? 'Lỗi đồng bộ Firestore'
+          : 'Đã đồng bộ Firestore';
+
+  const renderCloudPanel = () => (
+    <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          {user && syncStatus === 'synced' ? (
+            <Cloud className="w-4 h-4 text-teal-700 shrink-0" />
+          ) : (
+            <CloudOff className="w-4 h-4 text-slate-400 shrink-0" />
+          )}
+          <span className="text-xs font-medium text-slate-800 truncate">{syncLabel}</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            onOpenFirebaseGuide();
+            setMobileMenuOpen(false);
+          }}
+          className="text-slate-400 hover:text-teal-700 p-1 rounded transition-colors shrink-0"
+          title="Hướng dẫn cấu hình Firebase"
+          aria-label="Hướng dẫn cấu hình Firebase"
+        >
+          <HelpCircle className="w-4 h-4" />
+        </button>
+      </div>
+
+      {isFirebaseConfigured ? (
+        user ? (
+          <div className="space-y-2">
+            <div className="text-xs text-slate-600 truncate" title={user.email || user.displayName || ''}>
+              {user.email || user.displayName || 'Tài khoản Google'}
+            </div>
+
+            {!confirmPushCloud ? (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setConfirmPushCloud(true)}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-100 border border-slate-200 rounded-md transition-colors whitespace-nowrap"
+                >
+                  <UploadCloud className="w-3.5 h-3.5 shrink-0" />
+                  <span>Đẩy Local lên</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onSignOut}
+                  className="inline-flex items-center justify-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-md transition-colors whitespace-nowrap"
+                  title="Đăng xuất"
+                >
+                  <LogOut className="w-3.5 h-3.5 shrink-0" />
+                  <span>Thoát</span>
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-1.5 pt-1 border-t border-slate-200">
+                <p className="text-[11px] text-slate-600 leading-snug">
+                  Ghi đè dữ liệu Cloud bằng dữ liệu Local hiện tại trên máy?
+                </p>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSyncLocalToCloud();
+                      setConfirmPushCloud(false);
+                    }}
+                    className="flex-1 px-2 py-1 text-xs font-medium bg-teal-700 hover:bg-teal-800 text-white rounded-md whitespace-nowrap"
+                  >
+                    Ghi đè Cloud
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmPushCloud(false)}
+                    className="flex-1 px-2 py-1 text-xs font-medium bg-white text-slate-700 border border-slate-200 rounded-md hover:bg-slate-100 whitespace-nowrap"
+                  >
+                    Hủy
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={onSignInGoogle}
+            className="w-full flex items-center justify-center gap-2 px-3 py-1.5 text-xs font-medium bg-teal-700 hover:bg-teal-800 text-white rounded-md transition-colors whitespace-nowrap"
+          >
+            <LogIn className="w-3.5 h-3.5 shrink-0" />
+            <span>Đăng nhập Google để đồng bộ</span>
+          </button>
+        )
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            onOpenFirebaseGuide();
+            setMobileMenuOpen(false);
+          }}
+          className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-md transition-colors whitespace-nowrap"
+        >
+          <HelpCircle className="w-3.5 h-3.5 shrink-0" />
+          <span>Hướng dẫn cài đặt Firebase</span>
+        </button>
+      )}
+    </div>
+  );
+
+  const visibleSyncError = syncError && syncError !== dismissedError ? syncError : null;
 
   return (
     <div className="min-h-screen flex bg-slate-50 text-slate-900">
@@ -121,6 +269,8 @@ export function Layout({
         </nav>
 
         <div className="p-4 border-t border-slate-200 space-y-3">
+          {renderCloudPanel()}
+
           <div className="space-y-1.5 text-xs text-slate-600">
             <div className="flex items-center justify-between">
               <span>Tổng cố định / tháng</span>
@@ -135,8 +285,8 @@ export function Layout({
               </span>
             </div>
             <div className="flex items-center justify-between text-slate-500 pt-1">
-              <span>{menuCount} món</span>
-              <span>{catalogCount} mã hàng</span>
+              <span className="tabular-nums">{menuCount} món</span>
+              <span className="tabular-nums">{catalogCount} mã hàng</span>
             </div>
           </div>
 
@@ -220,6 +370,9 @@ export function Layout({
                 );
               })}
             </nav>
+            <div className="p-4 border-t border-slate-200 space-y-3">
+              {renderCloudPanel()}
+            </div>
           </aside>
         </div>
       )}
@@ -255,6 +408,34 @@ export function Layout({
         </header>
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1400px] w-full mx-auto">
+          {visibleSyncError && (
+            <div className="no-print mb-5 p-3.5 bg-red-50 border border-red-200 rounded-xl flex items-start justify-between gap-3 text-xs sm:text-sm text-red-800">
+              <div className="flex items-start gap-2.5 min-w-0">
+                <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                <div className="space-y-1 min-w-0">
+                  <div className="font-semibold">Không thể đồng bộ với Firebase Firestore</div>
+                  <p className="text-xs text-red-700 break-words">{visibleSyncError}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={onOpenFirebaseGuide}
+                  className="px-2.5 py-1 text-xs font-medium bg-white border border-red-200 text-red-800 hover:bg-red-100 rounded-md whitespace-nowrap"
+                >
+                  Xem hướng dẫn
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDismissedError(syncError)}
+                  className="p-1 text-red-500 hover:text-red-800 rounded"
+                  aria-label="Ẩn thông báo lỗi"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
           {children}
         </main>
       </div>

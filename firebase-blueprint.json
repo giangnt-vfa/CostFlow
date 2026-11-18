@@ -1,0 +1,213 @@
+{
+  "entities": {
+    "UserWorkspace": {
+      "title": "UserWorkspace",
+      "description": "Cấu hình không gian làm việc và quy tắc phân bổ chi phí cố định của người dùng.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID của chủ sở hữu"
+        },
+        "projectedMonthlyUnits": {
+          "type": "number",
+          "description": "Sản lượng bán dự kiến / tháng"
+        },
+        "includeCcdcDepreciation": {
+          "type": "boolean",
+          "description": "Có tự động cộng khấu hao CCDC hay không"
+        },
+        "defaultTargetFoodCostPct": {
+          "type": "number",
+          "description": "Tỉ lệ Food Cost mục tiêu mặc định (%)"
+        },
+        "defaultPlatformFeePct": {
+          "type": "number",
+          "description": "Chiết khấu sàn TMĐT mặc định (%)"
+        },
+        "btpSeeded": {
+          "type": "boolean",
+          "description": "Đã khởi tạo dữ liệu mẫu Bán thành phẩm"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ownerId",
+        "projectedMonthlyUnits",
+        "includeCcdcDepreciation",
+        "defaultTargetFoodCostPct",
+        "defaultPlatformFeePct",
+        "btpSeeded",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CatalogItem": {
+      "title": "CatalogItem",
+      "description": "Hàng hóa trong kho gồm Nguyên vật liệu, Bán thành phẩm, Bao bì và Công cụ dụng cụ.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "checked": { "type": "boolean" },
+        "code": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "category": {
+          "type": "string",
+          "enum": ["Nguyên vật liệu", "Bán thành phẩm", "Bao bì", "Công cụ dụng cụ"]
+        },
+        "qcChan": { "type": "number" },
+        "dvtChan": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "purchasePrices": {
+          "type": "array",
+          "description": "Tối đa 9 mức giá nhập"
+        },
+        "subIngredients": {
+          "type": "array",
+          "description": "Danh sách thành phần cấu tạo cho Bán thành phẩm (tối đa 50 dòng)"
+        },
+        "lossRate": { "type": "number" },
+        "qcLe": { "type": "number" },
+        "dvtLe": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "caloPerUnit": { "type": "number" },
+        "caloPerRetailUnit": { "type": "number" },
+        "depreciationMonths": { "type": "number" },
+        "note": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "checked",
+        "code",
+        "name",
+        "category",
+        "qcChan",
+        "dvtChan",
+        "purchasePrices",
+        "lossRate",
+        "qcLe",
+        "dvtLe",
+        "note",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "FixedCostItem": {
+      "title": "FixedCostItem",
+      "description": "Khoản chi phí cố định và mặt bằng hàng tháng.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "category": {
+          "type": "string",
+          "enum": ["Mặt bằng", "Nhân sự cố định", "Điện nước & Vận hành", "Marketing & Khác"]
+        },
+        "monthlyAmount": { "type": "number" },
+        "active": { "type": "boolean" },
+        "note": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "name",
+        "category",
+        "monthlyAmount",
+        "active",
+        "note",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MenuItem": {
+      "title": "MenuItem",
+      "description": "Món ăn / đồ uống trên menu kèm định lượng nguyên liệu, bao bì và giá bán.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "code": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "sizeLabel": { "type": "string", "maxLength": 60 },
+        "description": { "type": "string", "maxLength": 500 },
+        "yieldCount": { "type": "number" },
+        "ingredients": { "type": "array" },
+        "packaging": { "type": "array" },
+        "overheadMode": {
+          "type": "string",
+          "enum": ["auto", "custom", "none"]
+        },
+        "customOverheadPerUnit": { "type": "number" },
+        "platformFeePct": { "type": "number" },
+        "sellingPrice": { "type": "number" },
+        "estimatedMonthlySales": { "type": "number" },
+        "isOnMenu": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "code",
+        "name",
+        "category",
+        "sizeLabel",
+        "description",
+        "yieldCount",
+        "ingredients",
+        "packaging",
+        "overheadMode",
+        "customOverheadPerUnit",
+        "platformFeePct",
+        "sellingPrice",
+        "estimatedMonthlySales",
+        "isOnMenu",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserWorkspace" },
+      "description": "Lưu cấu hình tổng thể và thông số phân bổ chi phí cố định của từng người dùng."
+    },
+    "/users/{userId}/catalog/{itemId}": {
+      "schema": { "$ref": "#/entities/CatalogItem" },
+      "description": "Lưu danh mục Nguyên vật liệu, Bán thành phẩm, Bao bì và CCDC của người dùng."
+    },
+    "/users/{userId}/fixedCosts/{costId}": {
+      "schema": { "$ref": "#/entities/FixedCostItem" },
+      "description": "Lưu các khoản chi phí cố định và mặt bằng hàng tháng của người dùng."
+    },
+    "/users/{userId}/menuItems/{menuId}": {
+      "schema": { "$ref": "#/entities/MenuItem" },
+      "description": "Lưu danh sách món trên menu và định lượng công thức tính giá thành."
+    }
+  }
+}

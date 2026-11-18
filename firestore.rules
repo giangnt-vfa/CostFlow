@@ -1,0 +1,369 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Shared Hardened Primitives
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isOwner(userId) {
+      return isVerifiedUser() && request.auth.uid == userId;
+    }
+
+    function hasWorkspace(userId) {
+      return exists(/databases/$(database)/documents/users/$(userId))
+        || existsAfter(/databases/$(database)/documents/users/$(userId));
+    }
+
+    // Entity Validators
+    function isValidWorkspace(data, userId) {
+      return data.keys().hasAll([
+          'ownerId',
+          'projectedMonthlyUnits',
+          'includeCcdcDepreciation',
+          'defaultTargetFoodCostPct',
+          'defaultPlatformFeePct',
+          'btpSeeded',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'projectedMonthlyUnits',
+          'includeCcdcDepreciation',
+          'defaultTargetFoodCostPct',
+          'defaultPlatformFeePct',
+          'btpSeeded',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.ownerId)
+        && data.ownerId == userId
+        && data.projectedMonthlyUnits is number
+        && data.projectedMonthlyUnits >= 1
+        && data.projectedMonthlyUnits <= 10000000
+        && data.includeCcdcDepreciation is bool
+        && data.defaultTargetFoodCostPct is number
+        && data.defaultTargetFoodCostPct >= 1
+        && data.defaultTargetFoodCostPct <= 95
+        && data.defaultPlatformFeePct is number
+        && data.defaultPlatformFeePct >= 0
+        && data.defaultPlatformFeePct <= 80
+        && data.btpSeeded is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCatalogItem(data, userId) {
+      return data.keys().hasAll([
+          'ownerId',
+          'checked',
+          'code',
+          'name',
+          'category',
+          'qcChan',
+          'dvtChan',
+          'purchasePrices',
+          'lossRate',
+          'qcLe',
+          'dvtLe',
+          'note',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'checked',
+          'code',
+          'name',
+          'category',
+          'qcChan',
+          'dvtChan',
+          'purchasePrices',
+          'subIngredients',
+          'lossRate',
+          'qcLe',
+          'dvtLe',
+          'caloPerUnit',
+          'caloPerRetailUnit',
+          'depreciationMonths',
+          'note',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.ownerId)
+        && data.ownerId == userId
+        && data.checked is bool
+        && data.code is string && data.code.size() >= 1 && data.code.size() <= 40
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 200
+        && data.category is string
+        && data.category in ['Nguyên vật liệu', 'Bán thành phẩm', 'Bao bì', 'Công cụ dụng cụ']
+        && data.qcChan is number && data.qcChan > 0 && data.qcChan <= 1000000
+        && data.dvtChan is string && data.dvtChan.size() >= 1 && data.dvtChan.size() <= 40
+        && data.purchasePrices is list && data.purchasePrices.size() <= 9
+        && (data.purchasePrices.size() == 0 || (data.purchasePrices[0] is number && data.purchasePrices[0] >= 0))
+        && (!('subIngredients' in data) || (
+          data.subIngredients is list
+          && data.subIngredients.size() <= 50
+          && (data.subIngredients.size() == 0 || data.subIngredients[0] is map)
+        ))
+        && data.lossRate is number && data.lossRate >= 0 && data.lossRate <= 99
+        && data.qcLe is number && data.qcLe > 0 && data.qcLe <= 10000000
+        && data.dvtLe is string && data.dvtLe.size() >= 1 && data.dvtLe.size() <= 40
+        && (!('caloPerUnit' in data) || (data.caloPerUnit is number && data.caloPerUnit >= 0))
+        && (!('caloPerRetailUnit' in data) || (data.caloPerRetailUnit is number && data.caloPerRetailUnit >= 0))
+        && (!('depreciationMonths' in data) || (data.depreciationMonths is number && data.depreciationMonths >= 1 && data.depreciationMonths <= 600))
+        && data.note is string && data.note.size() <= 500
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFixedCost(data, userId) {
+      return data.keys().hasAll([
+          'ownerId',
+          'name',
+          'category',
+          'monthlyAmount',
+          'active',
+          'note',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'name',
+          'category',
+          'monthlyAmount',
+          'active',
+          'note',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.ownerId)
+        && data.ownerId == userId
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 200
+        && data.category is string
+        && data.category in ['Mặt bằng', 'Nhân sự cố định', 'Điện nước & Vận hành', 'Marketing & Khác']
+        && data.monthlyAmount is number && data.monthlyAmount >= 0 && data.monthlyAmount <= 10000000000
+        && data.active is bool
+        && data.note is string && data.note.size() <= 500
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMenuItem(data, userId) {
+      return data.keys().hasAll([
+          'ownerId',
+          'code',
+          'name',
+          'category',
+          'sizeLabel',
+          'description',
+          'yieldCount',
+          'ingredients',
+          'packaging',
+          'overheadMode',
+          'customOverheadPerUnit',
+          'platformFeePct',
+          'sellingPrice',
+          'estimatedMonthlySales',
+          'isOnMenu',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'code',
+          'name',
+          'category',
+          'sizeLabel',
+          'description',
+          'yieldCount',
+          'ingredients',
+          'packaging',
+          'overheadMode',
+          'customOverheadPerUnit',
+          'platformFeePct',
+          'sellingPrice',
+          'estimatedMonthlySales',
+          'isOnMenu',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.ownerId)
+        && data.ownerId == userId
+        && data.code is string && data.code.size() >= 1 && data.code.size() <= 40
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 200
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 100
+        && data.sizeLabel is string && data.sizeLabel.size() <= 60
+        && data.description is string && data.description.size() <= 500
+        && data.yieldCount is number && data.yieldCount >= 1 && data.yieldCount <= 10000
+        && data.ingredients is list && data.ingredients.size() <= 60
+        && (data.ingredients.size() == 0 || data.ingredients[0] is map)
+        && data.packaging is list && data.packaging.size() <= 30
+        && (data.packaging.size() == 0 || data.packaging[0] is map)
+        && data.overheadMode is string && data.overheadMode in ['auto', 'custom', 'none']
+        && data.customOverheadPerUnit is number && data.customOverheadPerUnit >= 0 && data.customOverheadPerUnit <= 100000000
+        && data.platformFeePct is number && data.platformFeePct >= 0 && data.platformFeePct <= 80
+        && data.sellingPrice is number && data.sellingPrice >= 0 && data.sellingPrice <= 1000000000
+        && data.estimatedMonthlySales is number && data.estimatedMonthlySales >= 0 && data.estimatedMonthlySales <= 10000000
+        && data.isOnMenu is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // User Workspace Root
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidWorkspace(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidWorkspace(incoming(), userId)
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'projectedMonthlyUnits',
+          'includeCcdcDepreciation',
+          'defaultTargetFoodCostPct',
+          'defaultPlatformFeePct',
+          'btpSeeded',
+          'updatedAt'
+        ]);
+      allow delete: if false;
+
+      // Catalog Subcollection (NVL, BTP, BB, CCDC)
+      match /catalog/{itemId} {
+        allow get: if isValidId(userId) && isValidId(itemId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerId == request.auth.uid;
+        allow create: if isValidId(userId)
+          && isValidId(itemId)
+          && isOwner(userId)
+          && isValidCatalogItem(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasWorkspace(userId);
+        allow update: if isValidId(userId)
+          && isValidId(itemId)
+          && isOwner(userId)
+          && isValidCatalogItem(incoming(), userId)
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'checked',
+            'code',
+            'name',
+            'category',
+            'qcChan',
+            'dvtChan',
+            'purchasePrices',
+            'subIngredients',
+            'lossRate',
+            'qcLe',
+            'dvtLe',
+            'caloPerUnit',
+            'caloPerRetailUnit',
+            'depreciationMonths',
+            'note',
+            'updatedAt'
+          ]);
+        allow delete: if isValidId(userId) && isValidId(itemId) && isOwner(userId);
+      }
+
+      // Fixed Costs Subcollection
+      match /fixedCosts/{costId} {
+        allow get: if isValidId(userId) && isValidId(costId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerId == request.auth.uid;
+        allow create: if isValidId(userId)
+          && isValidId(costId)
+          && isOwner(userId)
+          && isValidFixedCost(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasWorkspace(userId);
+        allow update: if isValidId(userId)
+          && isValidId(costId)
+          && isOwner(userId)
+          && isValidFixedCost(incoming(), userId)
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name',
+            'category',
+            'monthlyAmount',
+            'active',
+            'note',
+            'updatedAt'
+          ]);
+        allow delete: if isValidId(userId) && isValidId(costId) && isOwner(userId);
+      }
+
+      // Menu Items Subcollection
+      match /menuItems/{menuId} {
+        allow get: if isValidId(userId) && isValidId(menuId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerId == request.auth.uid;
+        allow create: if isValidId(userId)
+          && isValidId(menuId)
+          && isOwner(userId)
+          && isValidMenuItem(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasWorkspace(userId);
+        allow update: if isValidId(userId)
+          && isValidId(menuId)
+          && isOwner(userId)
+          && isValidMenuItem(incoming(), userId)
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'code',
+            'name',
+            'category',
+            'sizeLabel',
+            'description',
+            'yieldCount',
+            'ingredients',
+            'packaging',
+            'overheadMode',
+            'customOverheadPerUnit',
+            'platformFeePct',
+            'sellingPrice',
+            'estimatedMonthlySales',
+            'isOnMenu',
+            'updatedAt'
+          ]);
+        allow delete: if isValidId(userId) && isValidId(menuId) && isOwner(userId);
+      }
+    }
+  }
+}
