@@ -15,6 +15,7 @@ interface StoredWorkspace {
   fixedCosts: FixedCostItem[];
   overheadConfig: OverheadConfig;
   menuItems: MenuItem[];
+  btpSeeded?: boolean;
 }
 
 function loadWorkspace(): StoredWorkspace {
@@ -26,16 +27,38 @@ function loadWorkspace(): StoredWorkspace {
         fixedCosts: INITIAL_FIXED_COSTS,
         overheadConfig: INITIAL_OVERHEAD_CONFIG,
         menuItems: INITIAL_MENU_ITEMS,
+        btpSeeded: true,
       };
     }
     const parsed = JSON.parse(raw) as Partial<StoredWorkspace>;
+    let catalog =
+      Array.isArray(parsed.catalog) && parsed.catalog.length > 0 ? parsed.catalog : INITIAL_CATALOG;
+    let menuItems = Array.isArray(parsed.menuItems) ? parsed.menuItems : INITIAL_MENU_ITEMS;
+
+    if (!parsed.btpSeeded && !catalog.some((c) => c.category === 'Bán thành phẩm')) {
+      const existingIds = new Set(catalog.map((c) => c.id));
+      const newItems = INITIAL_CATALOG.filter(
+        (c) =>
+          (c.id === 'cat_NVL027' || c.category === 'Bán thành phẩm') &&
+          !existingIds.has(c.id)
+      );
+      catalog = [...catalog, ...newItems];
+
+      const existingMenuIds = new Set(menuItems.map((m) => m.id));
+      const sampleMenu = INITIAL_MENU_ITEMS.find((m) => m.id === 'menu_6');
+      if (sampleMenu && !existingMenuIds.has(sampleMenu.id)) {
+        menuItems = [...menuItems, sampleMenu];
+      }
+    }
+
     return {
-      catalog: Array.isArray(parsed.catalog) && parsed.catalog.length > 0 ? parsed.catalog : INITIAL_CATALOG,
+      catalog,
       fixedCosts: Array.isArray(parsed.fixedCosts) ? parsed.fixedCosts : INITIAL_FIXED_COSTS,
       overheadConfig: parsed.overheadConfig
         ? { ...INITIAL_OVERHEAD_CONFIG, ...parsed.overheadConfig }
         : INITIAL_OVERHEAD_CONFIG,
-      menuItems: Array.isArray(parsed.menuItems) ? parsed.menuItems : INITIAL_MENU_ITEMS,
+      menuItems,
+      btpSeeded: true,
     };
   } catch {
     return {
@@ -43,6 +66,7 @@ function loadWorkspace(): StoredWorkspace {
       fixedCosts: INITIAL_FIXED_COSTS,
       overheadConfig: INITIAL_OVERHEAD_CONFIG,
       menuItems: INITIAL_MENU_ITEMS,
+      btpSeeded: true,
     };
   }
 }
@@ -99,7 +123,16 @@ export function useCostingStore() {
   const deleteCatalogItem = useCallback((id: string) => {
     setWorkspace((prev) => ({
       ...prev,
-      catalog: prev.catalog.filter((item) => item.id !== id),
+      catalog: prev.catalog
+        .filter((item) => item.id !== id)
+        .map((item) =>
+          item.subIngredients
+            ? {
+                ...item,
+                subIngredients: item.subIngredients.filter((l) => l.catalogItemId !== id),
+              }
+            : item
+        ),
       menuItems: prev.menuItems.map((m) => ({
         ...m,
         ingredients: m.ingredients.filter((l) => l.catalogItemId !== id),

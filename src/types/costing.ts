@@ -1,4 +1,8 @@
-export type ItemCategory = 'Nguyên vật liệu' | 'Bao bì' | 'Công cụ dụng cụ';
+export type ItemCategory =
+  | 'Nguyên vật liệu'
+  | 'Bán thành phẩm'
+  | 'Bao bì'
+  | 'Công cụ dụng cụ';
 
 export interface CatalogItem {
   id: string;
@@ -7,10 +11,11 @@ export interface CatalogItem {
   name: string;
   category: ItemCategory;
   qcChan: number; // Quy cách chẵn (e.g. 15, 1, 1000)
-  dvtChan: string; // ĐVT chẵn (e.g. Gói, Hộp, Thùng)
+  dvtChan: string; // ĐVT chẵn (e.g. Gói, Hộp, Thùng, Mẻ)
   purchasePrices: number[]; // Giá nhập 1..9
+  subIngredients?: RecipeLineItem[]; // Thành phần cấu tạo khi category === 'Bán thành phẩm'
   lossRate: number; // Tỉ lệ hao hụt (%)
-  qcLe: number; // Quy cách lẻ (e.g. 1000, 500, 1)
+  qcLe: number; // Quy cách lẻ (e.g. 1000, 500, 1) hoặc sản lượng thu được của 1 mẻ BTP
   dvtLe: string; // ĐVT lẻ (e.g. gr, ml, cái)
   caloPerUnit?: number; // Năng lượng Calo/ĐV
   caloPerRetailUnit?: number; // Năng lượng đơn vị lẻ

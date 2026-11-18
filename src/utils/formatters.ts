@@ -61,13 +61,11 @@ export interface CatalogUnitStats {
   monthlyDepreciation: number;
 }
 
-export function computeCatalogUnitStats(item: CatalogItem): CatalogUnitStats {
-  const validPrices = item.purchasePrices.filter((p) => Number.isFinite(p) && p > 0);
-  const avgPurchasePrice =
-    validPrices.length > 0
-      ? validPrices.reduce((sum, p) => sum + p, 0) / validPrices.length
-      : 0;
-
+export function computeCatalogUnitStats(
+  item: CatalogItem,
+  catalogMap?: Map<string, CatalogItem>,
+  visited: Set<string> = new Set()
+): CatalogUnitStats {
   const qcChan = item.qcChan > 0 ? item.qcChan : 1;
   const qcLe = item.qcLe > 0 ? item.qcLe : 1;
   const totalRetailUnits = qcChan * qcLe;
@@ -76,9 +74,31 @@ export function computeCatalogUnitStats(item: CatalogItem): CatalogUnitStats {
   const usableRatio = 1 - clampedLoss / 100;
   const effectiveRetailUnits = totalRetailUnits * usableRatio;
 
+  let avgPurchasePrice = 0;
+
+  if (item.category === 'Bán thành phẩm') {
+    if (!visited.has(item.id) && catalogMap && item.subIngredients && item.subIngredients.length > 0) {
+      const nextVisited = new Set(visited);
+      nextVisited.add(item.id);
+      for (const line of item.subIngredients) {
+        const subItem = catalogMap.get(line.catalogItemId);
+        if (!subItem || nextVisited.has(subItem.id)) continue;
+        const subStats = computeCatalogUnitStats(subItem, catalogMap, nextVisited);
+        avgPurchasePrice += subStats.unitPrice * (line.quantity || 0);
+      }
+    }
+  } else {
+    const validPrices = item.purchasePrices.filter((p) => Number.isFinite(p) && p > 0);
+    avgPurchasePrice =
+      validPrices.length > 0
+        ? validPrices.reduce((sum, p) => sum + p, 0) / validPrices.length
+        : 0;
+  }
+
   const unitPrice = effectiveRetailUnits > 0 ? avgPurchasePrice / effectiveRetailUnits : 0;
 
-  const depMonths = item.depreciationMonths && item.depreciationMonths > 0 ? item.depreciationMonths : 12;
+  const depMonths =
+    item.depreciationMonths && item.depreciationMonths > 0 ? item.depreciationMonths : 12;
   const monthlyDepreciation =
     item.category === 'Công cụ dụng cụ' ? avgPurchasePrice / depMonths : 0;
 
@@ -89,6 +109,53 @@ export function computeCatalogUnitStats(item: CatalogItem): CatalogUnitStats {
     unitPrice,
     monthlyDepreciation,
   };
+}
+
+export function computeCatalogCaloriesPerRetailUnit(
+  item: CatalogItem,
+  catalogMap?: Map<string, CatalogItem>,
+  visited: Set<string> = new Set()
+): number {
+  if (item.category !== 'Bán thành phẩm') {
+    return item.caloPerRetailUnit || 0;
+  }
+  if (visited.has(item.id) || !catalogMap || !item.subIngredients?.length) {
+    return item.caloPerRetailUnit || 0;
+  }
+  const nextVisited = new Set(visited);
+  nextVisited.add(item.id);
+  let totalCalo = 0;
+  for (const line of item.subIngredients) {
+    const subItem = catalogMap.get(line.catalogItemId);
+    if (!subItem || nextVisited.has(subItem.id)) continue;
+    totalCalo +=
+      computeCatalogCaloriesPerRetailUnit(subItem, catalogMap, nextVisited) *
+      (line.quantity || 0);
+  }
+  const qcChan = item.qcChan > 0 ? item.qcChan : 1;
+  const qcLe = item.qcLe > 0 ? item.qcLe : 1;
+  const clampedLoss = Math.min(Math.max(item.lossRate || 0, 0), 99);
+  const effectiveRetailUnits = qcChan * qcLe * (1 - clampedLoss / 100);
+  return effectiveRetailUnits > 0 ? totalCalo / effectiveRetailUnits : 0;
+}
+
+export function hasCyclicDependency(
+  targetId: string,
+  candidateComponentId: string,
+  catalogMap: Map<string, CatalogItem>,
+  visited: Set<string> = new Set()
+): boolean {
+  if (targetId === candidateComponentId) return true;
+  if (visited.has(candidateComponentId)) return false;
+  const candidate = catalogMap.get(candidateComponentId);
+  if (!candidate || candidate.category !== 'Bán thành phẩm' || !candidate.subIngredients) {
+    return false;
+  }
+  const nextVisited = new Set(visited);
+  nextVisited.add(candidateComponentId);
+  return candidate.subIngredients.some((line) =>
+    hasCyclicDependency(targetId, line.catalogItemId, catalogMap, nextVisited)
+  );
 }
 
 export function computeMonthlyOverheadTotal(
@@ -155,10 +222,11 @@ export function computeMenuItemCosting(
   for (const line of menuItem.ingredients) {
     const cat = catalogMap.get(line.catalogItemId);
     if (!cat) continue;
-    const stats = computeCatalogUnitStats(cat);
+    const stats = computeCatalogUnitStats(cat, catalogMap);
     ingredientsBatchCost += stats.unitPrice * (line.quantity || 0);
-    if (cat.caloPerRetailUnit && cat.caloPerRetailUnit > 0) {
-      totalCaloriesBatch += cat.caloPerRetailUnit * (line.quantity || 0);
+    const caloPerUnit = computeCatalogCaloriesPerRetailUnit(cat, catalogMap);
+    if (caloPerUnit > 0) {
+      totalCaloriesBatch += caloPerUnit * (line.quantity || 0);
     }
   }
 
@@ -169,7 +237,7 @@ export function computeMenuItemCosting(
   for (const line of menuItem.packaging) {
     const cat = catalogMap.get(line.catalogItemId);
     if (!cat) continue;
-    const stats = computeCatalogUnitStats(cat);
+    const stats = computeCatalogUnitStats(cat, catalogMap);
     packagingCostPerUnit += stats.unitPrice * (line.quantity || 0);
   }
 
@@ -301,8 +369,11 @@ export function parseExcelCSV(csvText: string): CatalogItem[] {
 
     const rawCat = (cols[3] || '').trim();
     let category: CatalogItem['category'] = 'Nguyên vật liệu';
-    if (rawCat.toLowerCase().includes('bao')) category = 'Bao bì';
-    else if (rawCat.toLowerCase().includes('công cụ') || rawCat.toLowerCase().includes('ccdc')) {
+    if (rawCat.toLowerCase().includes('bán thành phẩm') || rawCat.toLowerCase().includes('btp')) {
+      category = 'Bán thành phẩm';
+    } else if (rawCat.toLowerCase().includes('bao')) {
+      category = 'Bao bì';
+    } else if (rawCat.toLowerCase().includes('công cụ') || rawCat.toLowerCase().includes('ccdc')) {
       category = 'Công cụ dụng cụ';
     }
 
@@ -385,8 +456,10 @@ export function exportCatalogToCSV(catalog: CatalogItem[]): string {
 
   const lines = [headers.map(escape).join(',')];
 
+  const catalogMap = new Map(catalog.map((c) => [c.id, c]));
+
   for (const item of catalog) {
-    const stats = computeCatalogUnitStats(item);
+    const stats = computeCatalogUnitStats(item, catalogMap);
     const prices = Array.from({ length: 9 }, (_, idx) => item.purchasePrices[idx] || '');
     const row = [
       item.checked ? 'TRUE' : 'FALSE',

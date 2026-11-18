@@ -73,7 +73,7 @@ export function RecipeCostingView({
   const availableIngredients = useMemo(() => {
     const q = normalizeVietnamese(ingSearch);
     return catalog
-      .filter((c) => c.category === 'Nguyên vật liệu')
+      .filter((c) => c.category === 'Nguyên vật liệu' || c.category === 'Bán thành phẩm')
       .filter(
         (c) =>
           !q ||
@@ -426,33 +426,33 @@ export function RecipeCostingView({
               <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h3 className="font-display text-base font-semibold text-slate-900">
-                    1. Định lượng Nguyên vật liệu (NVL)
+                    1. Định lượng Nguyên vật liệu &amp; Bán thành phẩm
                   </h3>
                   <p className="text-xs text-slate-500">
                     {selectedMenu.yieldCount > 1
-                      ? `Định lượng cho mẻ ${selectedMenu.yieldCount} phần · Chi phí NVL mỗi phần = ${formatVND(costing.ingredientsCostPerUnit)}`
-                      : `Định lượng cho 1 phần · Tổng NVL = ${formatVND(costing.ingredientsCostPerUnit)}`}
+                      ? `Định lượng cho mẻ ${selectedMenu.yieldCount} phần · Chi phí NVL/BTP mỗi phần = ${formatVND(costing.ingredientsCostPerUnit)}`
+                      : `Định lượng cho 1 phần · Tổng NVL & BTP = ${formatVND(costing.ingredientsCostPerUnit)}`}
                   </p>
                 </div>
 
-                {/* Searchable Add Ingredient Picker */}
-                <div className="relative w-full sm:w-72">
+                {/* Searchable Add Ingredient / BTP Picker */}
+                <div className="relative w-full sm:w-80">
                   <input
                     type="text"
                     value={ingSearch}
                     onChange={(e) => setIngSearch(e.target.value)}
-                    placeholder="+ Thêm nguyên liệu (tìm mã hoặc tên)..."
+                    placeholder="+ Thêm nguyên liệu hoặc bán thành phẩm..."
                     className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
                   />
                   {ingSearch.trim() !== '' && (
                     <div className="absolute right-0 left-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto z-20 divide-y divide-slate-100">
                       {availableIngredients.length === 0 ? (
                         <div className="p-3 text-xs text-slate-500">
-                          Không tìm thấy nguyên liệu phù hợp
+                          Không tìm thấy nguyên liệu hoặc bán thành phẩm phù hợp
                         </div>
                       ) : (
                         availableIngredients.slice(0, 12).map((cat) => {
-                          const st = computeCatalogUnitStats(cat);
+                          const st = computeCatalogUnitStats(cat, catalogMap);
                           return (
                             <button
                               key={cat.id}
@@ -464,7 +464,9 @@ export function RecipeCostingView({
                                 <div className="font-medium text-slate-900 truncate">
                                   {cat.name}
                                 </div>
-                                <div className="text-slate-400 font-mono-num">{cat.code}</div>
+                                <div className="text-slate-400">
+                                  <span className="font-mono-num">{cat.code}</span> · {cat.category}
+                                </div>
                               </div>
                               <div className="font-mono-num text-teal-700 font-medium shrink-0">
                                 {formatVND(st.unitPrice, false)}/{cat.dvtLe}
@@ -480,14 +482,14 @@ export function RecipeCostingView({
 
               {selectedMenu.ingredients.length === 0 ? (
                 <div className="p-8 text-center text-xs text-slate-500">
-                  Chưa có nguyên liệu nào. Gõ tên hoặc mã (ví dụ: Matcha, Sữa đặc, Đường...) ở ô phía trên để thêm vào định lượng.
+                  Chưa có nguyên liệu hoặc bán thành phẩm nào. Gõ tên hoặc mã (ví dụ: Matcha, Cốt cà phê, Sữa đặc...) ở ô phía trên để thêm vào định lượng.
                 </div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse text-sm">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200 text-xs font-medium text-slate-500">
-                        <th className="py-2.5 px-4">Mã / Nguyên liệu</th>
+                        <th className="py-2.5 px-4">Mã / Nguyên liệu &amp; BTP</th>
                         <th className="py-2.5 px-3 text-right whitespace-nowrap">Đơn giá lẻ</th>
                         <th className="py-2.5 px-3 text-right whitespace-nowrap">Định lượng</th>
                         <th className="py-2.5 px-3 text-right whitespace-nowrap">Thành tiền</th>
@@ -498,14 +500,14 @@ export function RecipeCostingView({
                       {selectedMenu.ingredients.map((line) => {
                         const cat = catalogMap.get(line.catalogItemId);
                         if (!cat) return null;
-                        const stats = computeCatalogUnitStats(cat);
+                        const stats = computeCatalogUnitStats(cat, catalogMap);
                         const lineCost = stats.unitPrice * (line.quantity || 0);
                         return (
                           <tr key={line.id} className="hover:bg-slate-50/70">
                             <td className="py-2.5 px-4">
                               <div className="font-medium text-slate-900">{cat.name}</div>
-                              <div className="text-xs text-slate-400 font-mono-num">
-                                {cat.code} · {cat.dvtLe}
+                              <div className="text-xs text-slate-400">
+                                <span className="font-mono-num">{cat.code}</span> · {cat.category} · {cat.dvtLe}
                               </div>
                             </td>
                             <td className="py-2.5 px-3 text-right font-mono-num text-slate-600 whitespace-nowrap">

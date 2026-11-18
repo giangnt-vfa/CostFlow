@@ -9,12 +9,14 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { CatalogItem, ItemCategory } from '../types/costing';
+import { CatalogItem, ItemCategory, RecipeLineItem } from '../types/costing';
 import {
+  computeCatalogCaloriesPerRetailUnit,
   computeCatalogUnitStats,
   exportCatalogToCSV,
   formatNumber,
   formatVND,
+  hasCyclicDependency,
   normalizeVietnamese,
   parseExcelCSV,
   triggerDownloadCSV,
@@ -31,24 +33,49 @@ interface CatalogViewProps {
 const CATEGORIES: Array<'Tất cả' | ItemCategory> = [
   'Tất cả',
   'Nguyên vật liệu',
+  'Bán thành phẩm',
   'Bao bì',
   'Công cụ dụng cụ',
 ];
 
 function createEmptyItem(category: ItemCategory = 'Nguyên vật liệu', nextIndex = 1): Omit<CatalogItem, 'id'> {
   const prefix =
-    category === 'Nguyên vật liệu' ? 'NVL' : category === 'Bao bì' ? 'BB' : 'CCDC';
+    category === 'Nguyên vật liệu'
+      ? 'NVL'
+      : category === 'Bán thành phẩm'
+        ? 'BTP'
+        : category === 'Bao bì'
+          ? 'BB'
+          : 'CCDC';
   return {
     checked: false,
     code: `${prefix}${String(nextIndex).padStart(3, '0')}`,
     name: '',
     category,
     qcChan: 1,
-    dvtChan: category === 'Bao bì' ? 'Thùng' : category === 'Công cụ dụng cụ' ? 'Cái' : 'Gói',
-    purchasePrices: [0],
+    dvtChan:
+      category === 'Bán thành phẩm'
+        ? 'Mẻ'
+        : category === 'Bao bì'
+          ? 'Thùng'
+          : category === 'Công cụ dụng cụ'
+            ? 'Cái'
+            : 'Gói',
+    purchasePrices: category === 'Bán thành phẩm' ? [] : [0],
+    subIngredients: category === 'Bán thành phẩm' ? [] : undefined,
     lossRate: 0,
-    qcLe: category === 'Nguyên vật liệu' ? 1000 : 1,
-    dvtLe: category === 'Nguyên vật liệu' ? 'gr' : 'cái',
+    qcLe:
+      category === 'Nguyên vật liệu'
+        ? 1000
+        : category === 'Bán thành phẩm'
+          ? 500
+          : 1,
+    dvtLe:
+      category === 'Nguyên vật liệu'
+        ? 'gr'
+        : category === 'Bán thành phẩm'
+          ? 'ml'
+          : 'cái',
     caloPerUnit: undefined,
     caloPerRetailUnit: undefined,
     depreciationMonths: category === 'Công cụ dụng cụ' ? 12 : undefined,
@@ -69,12 +96,18 @@ export function CatalogView({
   const [formState, setFormState] = useState<Omit<CatalogItem, 'id'>>(createEmptyItem());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [importFeedback, setImportFeedback] = useState<string | null>(null);
+  const [subPickerSearch, setSubPickerSearch] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const catalogMap = useMemo(() => {
+    return new Map(catalog.map((c) => [c.id, c]));
+  }, [catalog]);
 
   const counts = useMemo(() => {
     return {
       all: catalog.length,
       nvl: catalog.filter((c) => c.category === 'Nguyên vật liệu').length,
+      btp: catalog.filter((c) => c.category === 'Bán thành phẩm').length,
       bb: catalog.filter((c) => c.category === 'Bao bì').length,
       ccdc: catalog.filter((c) => c.category === 'Công cụ dụng cụ').length,
     };
@@ -99,6 +132,7 @@ export function CatalogView({
       categoryFilter === 'Tất cả' ? 'Nguyên vật liệu' : categoryFilter;
     const catCount = catalog.filter((c) => c.category === defaultCat).length + 1;
     setFormState(createEmptyItem(defaultCat, catCount));
+    setSubPickerSearch('');
     setEditingId('new');
   };
 
@@ -111,6 +145,7 @@ export function CatalogView({
       qcChan: item.qcChan,
       dvtChan: item.dvtChan,
       purchasePrices: item.purchasePrices.length > 0 ? [...item.purchasePrices] : [0],
+      subIngredients: item.subIngredients ? item.subIngredients.map((l) => ({ ...l })) : [],
       lossRate: item.lossRate,
       qcLe: item.qcLe,
       dvtLe: item.dvtLe,
@@ -119,22 +154,70 @@ export function CatalogView({
       depreciationMonths: item.depreciationMonths ?? 12,
       note: item.note,
     });
+    setSubPickerSearch('');
     setEditingId(item.id);
   };
 
+  const availableSubComponents = useMemo(() => {
+    const q = normalizeVietnamese(subPickerSearch);
+    const currentId = editingId && editingId !== 'new' ? editingId : '';
+    return catalog
+      .filter((c) => c.category === 'Nguyên vật liệu' || c.category === 'Bán thành phẩm')
+      .filter((c) => {
+        if (currentId && hasCyclicDependency(currentId, c.id, catalogMap)) {
+          return false;
+        }
+        if (!q) return true;
+        return (
+          normalizeVietnamese(c.name).includes(q) ||
+          normalizeVietnamese(c.code).includes(q)
+        );
+      });
+  }, [catalog, catalogMap, editingId, subPickerSearch]);
+
   const liveFormStats = useMemo(() => {
-    return computeCatalogUnitStats({ id: 'preview', ...formState });
-  }, [formState]);
+    const previewId = editingId && editingId !== 'new' ? editingId : 'preview';
+    const previewItem: CatalogItem = { id: previewId, ...formState };
+    return computeCatalogUnitStats(previewItem, catalogMap);
+  }, [formState, catalogMap, editingId]);
+
+  const handleAddSubIngredient = (catalogItemId: string) => {
+    const currentLines: RecipeLineItem[] = formState.subIngredients || [];
+    const existing = currentLines.find((l) => l.catalogItemId === catalogItemId);
+    if (existing) {
+      setFormState({
+        ...formState,
+        subIngredients: currentLines.map((l) =>
+          l.id === existing.id ? { ...l, quantity: l.quantity + 10 } : l
+        ),
+      });
+    } else {
+      setFormState({
+        ...formState,
+        subIngredients: [
+          ...currentLines,
+          {
+            id: `sub_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            catalogItemId,
+            quantity: 50,
+          },
+        ],
+      });
+    }
+    setSubPickerSearch('');
+  };
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formState.name.trim()) return;
-    const cleanedPrices = formState.purchasePrices.filter((p) => p > 0);
+    const isBtp = formState.category === 'Bán thành phẩm';
+    const cleanedPrices = isBtp ? [] : formState.purchasePrices.filter((p) => p > 0);
     const payload: Omit<CatalogItem, 'id'> = {
       ...formState,
-      code: formState.code.trim().toUpperCase() || 'SP001',
+      code: formState.code.trim().toUpperCase() || (isBtp ? 'BTP001' : 'SP001'),
       name: formState.name.trim(),
-      purchasePrices: cleanedPrices.length > 0 ? cleanedPrices : [0],
+      purchasePrices: isBtp ? [] : cleanedPrices.length > 0 ? cleanedPrices : [0],
+      subIngredients: isBtp ? formState.subIngredients || [] : undefined,
       qcChan: formState.qcChan > 0 ? formState.qcChan : 1,
       qcLe: formState.qcLe > 0 ? formState.qcLe : 1,
     };
@@ -176,10 +259,10 @@ export function CatalogView({
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
           <h1 className="font-display text-2xl font-bold text-slate-900 tracking-tight">
-            Kho dữ liệu Nguyên vật liệu, Bao bì &amp; CCDC
+            Kho dữ liệu Nguyên vật liệu, Bán thành phẩm, Bao bì &amp; CCDC
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Quy đổi giá nhập chẵn sang đơn giá lẻ (gr, ml, cái) theo công thức bảng Excel: Giá nhập TB ÷ (QC chẵn × QC lẻ × (1 − Hao hụt%)).
+            Quy đổi giá nhập chẵn sang đơn giá lẻ (gr, ml, cái) hoặc tạo Bán thành phẩm từ nhiều nguyên liệu để tính giá thành đồng bộ.
           </p>
         </div>
 
@@ -241,9 +324,11 @@ export function CatalogView({
                   ? counts.all
                   : cat === 'Nguyên vật liệu'
                     ? counts.nvl
-                    : cat === 'Bao bì'
-                      ? counts.bb
-                      : counts.ccdc;
+                    : cat === 'Bán thành phẩm'
+                      ? counts.btp
+                      : cat === 'Bao bì'
+                        ? counts.bb
+                        : counts.ccdc;
               return (
                 <button
                   key={cat}
@@ -301,8 +386,20 @@ export function CatalogView({
               </thead>
               <tbody className="divide-y divide-slate-200 text-sm">
                 {filtered.map((item) => {
-                  const stats = computeCatalogUnitStats(item);
+                  const stats = computeCatalogUnitStats(item, catalogMap);
+                  const caloRetail = computeCatalogCaloriesPerRetailUnit(item, catalogMap);
+                  const isBtp = item.category === 'Bán thành phẩm';
                   const isDeleting = confirmDeleteId === item.id;
+                  const btpSummary = isBtp && item.subIngredients?.length
+                    ? item.subIngredients
+                        .map((l) => {
+                          const comp = catalogMap.get(l.catalogItemId);
+                          return comp ? `${comp.name} (${formatNumber(l.quantity)} ${comp.dvtLe})` : null;
+                        })
+                        .filter(Boolean)
+                        .join(' + ')
+                    : '';
+
                   return (
                     <tr key={item.id} className="hover:bg-slate-50/90 transition-colors">
                       <td className="py-2.5 px-3 text-center">
@@ -324,9 +421,9 @@ export function CatalogView({
                       </td>
                       <td className="py-2.5 px-3">
                         <div className="font-medium text-slate-900 min-w-[200px]">{item.name}</div>
-                        {item.note && (
-                          <div className="text-xs text-slate-400 truncate max-w-[260px]">
-                            {item.note}
+                        {(btpSummary || item.note) && (
+                          <div className="text-xs text-slate-400 truncate max-w-[280px]">
+                            {btpSummary || item.note}
                           </div>
                         )}
                       </td>
@@ -341,7 +438,9 @@ export function CatalogView({
                           {formatVND(stats.avgPurchasePrice, false)}
                         </div>
                         <div className="text-[11px] text-slate-400">
-                          {item.purchasePrices.filter((p) => p > 0).length} giá nhập
+                          {isBtp
+                            ? `${item.subIngredients?.length || 0} thành phần`
+                            : `${item.purchasePrices.filter((p) => p > 0).length} giá nhập`}
                         </div>
                       </td>
                       <td className="py-2.5 px-3 text-right font-mono-num text-slate-600 whitespace-nowrap">
@@ -359,8 +458,8 @@ export function CatalogView({
                       <td className="py-2.5 px-3 text-right font-mono-num text-xs text-slate-600 whitespace-nowrap">
                         {item.category === 'Công cụ dụng cụ'
                           ? `${formatVND(stats.monthlyDepreciation, false)}/th`
-                          : item.caloPerRetailUnit !== undefined
-                            ? `${formatNumber(item.caloPerRetailUnit)} cal`
+                          : caloRetail > 0 || item.caloPerRetailUnit !== undefined
+                            ? `${formatNumber(caloRetail)} cal`
                             : '—'}
                       </td>
                       <td className="py-2.5 px-4 text-right whitespace-nowrap">
@@ -452,12 +551,35 @@ export function CatalogView({
                   </label>
                   <select
                     value={formState.category}
-                    onChange={(e) =>
-                      setFormState({ ...formState, category: e.target.value as ItemCategory })
-                    }
+                    onChange={(e) => {
+                      const nextCat = e.target.value as ItemCategory;
+                      const catCount = catalog.filter((c) => c.category === nextCat).length + 1;
+                      const prefix =
+                        nextCat === 'Nguyên vật liệu'
+                          ? 'NVL'
+                          : nextCat === 'Bán thành phẩm'
+                            ? 'BTP'
+                            : nextCat === 'Bao bì'
+                              ? 'BB'
+                              : 'CCDC';
+                      setFormState({
+                        ...formState,
+                        category: nextCat,
+                        code:
+                          editingId === 'new'
+                            ? `${prefix}${String(catCount).padStart(3, '0')}`
+                            : formState.code,
+                        dvtChan: nextCat === 'Bán thành phẩm' ? 'Mẻ' : formState.dvtChan,
+                        subIngredients:
+                          nextCat === 'Bán thành phẩm'
+                            ? formState.subIngredients || []
+                            : formState.subIngredients,
+                      });
+                    }}
                     className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-teal-600"
                   >
                     <option value="Nguyên vật liệu">Nguyên vật liệu</option>
+                    <option value="Bán thành phẩm">Bán thành phẩm</option>
                     <option value="Bao bì">Bao bì</option>
                     <option value="Công cụ dụng cụ">Công cụ dụng cụ</option>
                   </select>
@@ -474,7 +596,11 @@ export function CatalogView({
                   value={formState.name}
                   onChange={(e) => setFormState({ ...formState, name: e.target.value })}
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
-                  placeholder="Ví dụ: SỮA TƯƠI THANH TRÙNG DALAT MILK 950ML"
+                  placeholder={
+                    formState.category === 'Bán thành phẩm'
+                      ? 'Ví dụ: CỐT CÀ PHÊ ĐEN hoặc CỐT CÀ PHÊ SỮA'
+                      : 'Ví dụ: SỮA TƯƠI THANH TRÙNG DALAT MILK 950ML'
+                  }
                 />
               </div>
 
@@ -482,7 +608,7 @@ export function CatalogView({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-100">
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
-                    QC chẵn
+                    {formState.category === 'Bán thành phẩm' ? 'Số mẻ' : 'QC chẵn'}
                   </label>
                   <input
                     type="number"
@@ -497,19 +623,19 @@ export function CatalogView({
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
-                    ĐVT chẵn
+                    {formState.category === 'Bán thành phẩm' ? 'ĐVT mẻ' : 'ĐVT chẵn'}
                   </label>
                   <input
                     type="text"
                     value={formState.dvtChan}
                     onChange={(e) => setFormState({ ...formState, dvtChan: e.target.value })}
                     className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
-                    placeholder="Thùng / Gói"
+                    placeholder={formState.category === 'Bán thành phẩm' ? 'Mẻ / Nồi' : 'Thùng / Gói'}
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
-                    QC lẻ
+                    {formState.category === 'Bán thành phẩm' ? 'Sản lượng thu được' : 'QC lẻ'}
                   </label>
                   <input
                     type="number"
@@ -536,70 +662,203 @@ export function CatalogView({
                 </div>
               </div>
 
-              {/* Giá nhập 1..9 */}
-              <div className="pt-2 border-t border-slate-100 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-xs font-semibold text-slate-800">
-                      Lịch sử giá nhập (tối đa 9 lần — tự động tính trung bình)
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      Giá nhập TB hiện tại:{' '}
-                      <strong className="font-mono-num text-slate-900">
-                        {formatVND(liveFormStats.avgPurchasePrice)}
-                      </strong>
-                    </p>
+              {formState.category === 'Bán thành phẩm' ? (
+                /* Thành phần cấu tạo Bán thành phẩm */
+                <div className="pt-2 border-t border-slate-100 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-xs font-semibold text-slate-800">
+                        Nguyên liệu &amp; Bán thành phẩm cấu tạo nên 1 mẻ
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        Tổng giá vốn mẻ hiện tại:{' '}
+                        <strong className="font-mono-num text-slate-900">
+                          {formatVND(liveFormStats.avgPurchasePrice)}
+                        </strong>
+                      </p>
+                    </div>
                   </div>
-                  {formState.purchasePrices.length < 9 && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setFormState({
-                          ...formState,
-                          purchasePrices: [...formState.purchasePrices, 0],
-                        })
-                      }
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-md whitespace-nowrap"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Thêm lần nhập</span>
-                    </button>
+
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={subPickerSearch}
+                      onChange={(e) => setSubPickerSearch(e.target.value)}
+                      placeholder="+ Tìm nguyên liệu hoặc bán thành phẩm để thêm..."
+                      className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                    />
+                    {subPickerSearch.trim() !== '' && (
+                      <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-52 overflow-y-auto z-20 divide-y divide-slate-100">
+                        {availableSubComponents.length === 0 ? (
+                          <div className="p-3 text-xs text-slate-500">
+                            Không tìm thấy thành phần phù hợp
+                          </div>
+                        ) : (
+                          availableSubComponents.slice(0, 12).map((comp) => {
+                            const st = computeCatalogUnitStats(comp, catalogMap);
+                            return (
+                              <button
+                                key={comp.id}
+                                type="button"
+                                onClick={() => handleAddSubIngredient(comp.id)}
+                                className="w-full text-left px-3 py-2 hover:bg-teal-50 flex items-center justify-between gap-2 text-xs"
+                              >
+                                <div className="min-w-0">
+                                  <div className="font-medium text-slate-900 truncate">
+                                    {comp.name}
+                                  </div>
+                                  <div className="text-slate-400">
+                                    <span className="font-mono-num">{comp.code}</span> · {comp.category}
+                                  </div>
+                                </div>
+                                <div className="font-mono-num text-teal-700 font-medium shrink-0">
+                                  {formatVND(st.unitPrice, false)}/{comp.dvtLe}
+                                </div>
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {!formState.subIngredients || formState.subIngredients.length === 0 ? (
+                    <div className="p-4 bg-slate-50 border border-dashed border-slate-200 rounded-lg text-center text-xs text-slate-500">
+                      Chưa có thành phần nào. Gõ tên nguyên liệu (ví dụ: Cà phê, Nước sôi, Sữa đặc...) ở ô phía trên để thêm.
+                    </div>
+                  ) : (
+                    <div className="border border-slate-200 rounded-lg overflow-hidden divide-y divide-slate-100">
+                      {formState.subIngredients.map((line) => {
+                        const comp = catalogMap.get(line.catalogItemId);
+                        if (!comp) return null;
+                        const compStats = computeCatalogUnitStats(comp, catalogMap);
+                        const lineCost = compStats.unitPrice * (line.quantity || 0);
+                        return (
+                          <div
+                            key={line.id}
+                            className="px-3 py-2.5 flex items-center justify-between gap-2 text-sm bg-white"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="font-medium text-slate-900 truncate text-xs sm:text-sm">
+                                {comp.name}
+                              </div>
+                              <div className="text-[11px] text-slate-400">
+                                <span className="font-mono-num">{comp.code}</span> · {comp.category} ·{' '}
+                                <span className="font-mono-num">
+                                  {formatVND(compStats.unitPrice, false)}/{comp.dvtLe}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <input
+                                type="number"
+                                min={0}
+                                step="any"
+                                value={line.quantity}
+                                onChange={(e) => {
+                                  const val = Math.max(0, Number(e.target.value) || 0);
+                                  setFormState({
+                                    ...formState,
+                                    subIngredients: (formState.subIngredients || []).map((l) =>
+                                      l.id === line.id ? { ...l, quantity: val } : l
+                                    ),
+                                  });
+                                }}
+                                className="w-20 px-2 py-1 text-right font-mono-num text-sm border border-slate-200 rounded focus:outline-none focus:ring-2 focus:ring-teal-600"
+                              />
+                              <span className="text-xs text-slate-500 w-7">{comp.dvtLe}</span>
+                              <span className="font-mono-num text-xs font-medium text-slate-800 w-20 text-right">
+                                {formatVND(lineCost, false)} đ
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setFormState({
+                                    ...formState,
+                                    subIngredients: (formState.subIngredients || []).filter(
+                                      (l) => l.id !== line.id
+                                    ),
+                                  })
+                                }
+                                className="p-1 text-slate-400 hover:text-red-600"
+                                title="Xóa thành phần"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
+              ) : (
+                /* Giá nhập 1..9 */
+                <div className="pt-2 border-t border-slate-100 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xs font-semibold text-slate-800">
+                        Lịch sử giá nhập (tối đa 9 lần — tự động tính trung bình)
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        Giá nhập TB hiện tại:{' '}
+                        <strong className="font-mono-num text-slate-900">
+                          {formatVND(liveFormStats.avgPurchasePrice)}
+                        </strong>
+                      </p>
+                    </div>
+                    {formState.purchasePrices.length < 9 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFormState({
+                            ...formState,
+                            purchasePrices: [...formState.purchasePrices, 0],
+                          })
+                        }
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-teal-700 bg-teal-50 hover:bg-teal-100 rounded-md whitespace-nowrap"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Thêm lần nhập</span>
+                      </button>
+                    )}
+                  </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                  {formState.purchasePrices.map((price, idx) => (
-                    <div key={idx} className="flex items-center gap-1.5">
-                      <span className="text-xs text-slate-400 w-9 shrink-0">Lần {idx + 1}</span>
-                      <input
-                        type="number"
-                        min={0}
-                        value={price || ''}
-                        onChange={(e) => {
-                          const next = [...formState.purchasePrices];
-                          next[idx] = Number(e.target.value) || 0;
-                          setFormState({ ...formState, purchasePrices: next });
-                        }}
-                        className="w-full px-2.5 py-1.5 text-sm font-mono-num border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
-                        placeholder="0"
-                      />
-                      {formState.purchasePrices.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const next = formState.purchasePrices.filter((_, i) => i !== idx);
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    {formState.purchasePrices.map((price, idx) => (
+                      <div key={idx} className="flex items-center gap-1.5">
+                        <span className="text-xs text-slate-400 w-9 shrink-0">Lần {idx + 1}</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={price || ''}
+                          onChange={(e) => {
+                            const next = [...formState.purchasePrices];
+                            next[idx] = Number(e.target.value) || 0;
                             setFormState({ ...formState, purchasePrices: next });
                           }}
-                          className="p-1 text-slate-400 hover:text-red-600"
-                          title="Xóa lần nhập"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                          className="w-full px-2.5 py-1.5 text-sm font-mono-num border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
+                          placeholder="0"
+                        />
+                        {formState.purchasePrices.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = formState.purchasePrices.filter((_, i) => i !== idx);
+                              setFormState({ ...formState, purchasePrices: next });
+                            }}
+                            className="p-1 text-slate-400 hover:text-red-600"
+                            title="Xóa lần nhập"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Hao hụt & Calo / Khấu hao */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-slate-100">

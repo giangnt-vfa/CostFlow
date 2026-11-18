@@ -46,7 +46,7 @@ const NAV_ITEMS: Array<{
   {
     id: 'catalog',
     label: 'Nguyên liệu & Bao bì',
-    breadcrumb: 'Kho dữ liệu / Nguyên vật liệu, Bao bì & CCDC',
+    breadcrumb: 'Kho dữ liệu / Nguyên vật liệu, Bán thành phẩm, Bao bì & CCDC',
     icon: Package,
   },
   {
