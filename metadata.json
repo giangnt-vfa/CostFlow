@@ -1,0 +1,6 @@
+{
+  "name": "CostFlow F&B — Tính Giá Thành & Quản Lý Menu",
+  "description": "Ứng dụng tính giá thành sản phẩm, định lượng nguyên vật liệu, bao bì, chi phí cố định, chi phí mặt bằng và quản lý menu món F&B.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
