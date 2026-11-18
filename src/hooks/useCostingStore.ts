@@ -13,6 +13,7 @@ import {
   isFirebaseConfigured,
   resolvedFirebaseConfig,
   subscribeConnectionWarning,
+  testConnection,
 } from '../firebase';
 import { CatalogItem, FixedCostItem, MenuItem, OverheadConfig } from '../types/costing';
 import {
@@ -104,6 +105,7 @@ export function useCostingStore() {
   const [authReady, setAuthReady] = useState<boolean>(!isFirebaseConfigured);
   const [syncStatus, setSyncStatus] = useState<CloudSyncStatus>('local');
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncRetryNonce, setSyncRetryNonce] = useState(0);
 
   // Persist local cache
   useEffect(() => {
@@ -200,7 +202,13 @@ export function useCostingStore() {
       cancelled = true;
       if (unsubFirestore) unsubFirestore();
     };
-  }, [authReady, user]);
+  }, [authReady, user, syncRetryNonce]);
+
+  const retryCloudSync = useCallback(async () => {
+    setSyncError(null);
+    await testConnection();
+    setSyncRetryNonce((n) => n + 1);
+  }, []);
 
   const signInWithGoogle = useCallback(async () => {
     if (!auth || !googleProvider) return;
@@ -611,6 +619,7 @@ export function useCostingStore() {
     signInWithGoogle,
     signOutUser,
     syncLocalDataToCloud,
+    retryCloudSync,
     // CRUD actions
     addCatalogItem,
     updateCatalogItem,

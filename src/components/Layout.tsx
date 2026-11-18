@@ -38,6 +38,7 @@ interface LayoutProps {
   onSignInGoogle: () => void;
   onSignOut: () => void;
   onSyncLocalToCloud: () => void;
+  onRetryCloudSync: () => void;
   onOpenFirebaseGuide: () => void;
   children: React.ReactNode;
 }
@@ -96,6 +97,7 @@ export function Layout({
   onSignInGoogle,
   onSignOut,
   onSyncLocalToCloud,
+  onRetryCloudSync,
   onOpenFirebaseGuide,
   children,
 }: LayoutProps) {
@@ -418,6 +420,13 @@ export function Layout({
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={onRetryCloudSync}
+                  className="px-2.5 py-1 text-xs font-medium bg-red-700 hover:bg-red-800 text-white rounded-md whitespace-nowrap"
+                >
+                  Thử kết nối lại
+                </button>
                 <button
                   type="button"
                   onClick={onOpenFirebaseGuide}

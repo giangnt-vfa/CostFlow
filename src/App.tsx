@@ -95,6 +95,7 @@ export default function App() {
         onSignInGoogle={() => void store.signInWithGoogle()}
         onSignOut={() => void store.signOutUser()}
         onSyncLocalToCloud={() => void store.syncLocalDataToCloud()}
+        onRetryCloudSync={() => void store.retryCloudSync()}
         onOpenFirebaseGuide={() => setFirebaseGuideOpen(true)}
       >
         {activeTab === 'dashboard' && (

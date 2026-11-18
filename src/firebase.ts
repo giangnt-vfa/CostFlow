@@ -114,11 +114,38 @@ export interface FirestoreErrorInfo {
   };
 }
 
+export function getFirestoreConnectivityMessage(): string {
+  const dbName = resolvedFirebaseConfig?.firestoreDatabaseId || '(default)';
+  const projectId = resolvedFirebaseConfig?.projectId || 'chưa rõ';
+  if (dbName === 'default') {
+    return `Chưa kết nối được tới Firestore của dự án "${projectId}" với database "default". Lưu ý: database mặc định của Firebase là "(default)" — hãy để trống biến VITE_FIREBASE_DATABASE_ID (không điền "default") và kiểm tra đã bấm Create database trong Firebase Console → Firestore Database chưa.`;
+  }
+  return `Chưa kết nối được tới Firestore của dự án "${projectId}" (database "${dbName}"). Hãy vào Firebase Console → Firestore Database để tạo cơ sở dữ liệu (${dbName}) và xuất bản firestore.rules.`;
+}
+
+function isConnectivityError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error);
+  const code = (error as { code?: string })?.code || '';
+  return (
+    code === 'unavailable' ||
+    msg.includes('the client is offline') ||
+    msg.includes('Failed to get document because the client is offline') ||
+    msg.includes('does not exist')
+  );
+}
+
 export function handleFirestoreError(
   error: unknown,
   operationType: OperationType,
   path: string | null
 ): never {
+  if (isConnectivityError(error)) {
+    const friendly = getFirestoreConnectivityMessage();
+    console.warn('Firestore connectivity issue:', friendly);
+    setConnectionWarning(friendly);
+    throw new Error(friendly);
+  }
+
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -160,20 +187,22 @@ function setConnectionWarning(warning: string | null) {
   }
 }
 
-async function testConnection() {
-  if (!db || !resolvedFirebaseConfig) return;
+export async function testConnection(): Promise<boolean> {
+  if (!db || !resolvedFirebaseConfig) return false;
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
     setConnectionWarning(null);
+    return true;
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (msg.includes('the client is offline') || msg.includes('unavailable')) {
-      const dbName = resolvedFirebaseConfig.firestoreDatabaseId || '(default)';
-      const projectId = resolvedFirebaseConfig.projectId;
-      const friendly = `Chưa kết nối được tới Firestore của dự án "${projectId}" (database "${dbName}"). Hãy kiểm tra trong Firebase Console xem bạn đã tạo Firestore Database (${dbName}) ở chế độ Native chưa, hoặc kiểm tra kết nối mạng.`;
+    if (isConnectivityError(error)) {
+      const friendly = getFirestoreConnectivityMessage();
       console.warn(friendly);
       setConnectionWarning(friendly);
+      return false;
     }
+    // Permission denied on test/connection means Firestore IS reachable and rules are active
+    setConnectionWarning(null);
+    return true;
   }
 }
 

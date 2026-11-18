@@ -55,6 +55,13 @@ export function FirebaseGuideModal({
                 </code>
               </div>
             )}
+            {databaseId === 'default' && (
+              <div className="pt-1 text-red-700 font-medium">
+                Lưu ý: Biến <code className="font-mono-num bg-red-50 px-1 rounded">VITE_FIREBASE_DATABASE_ID</code> đang đặt là{' '}
+                <code className="font-mono-num bg-red-50 px-1 rounded">&quot;default&quot;</code>. Cơ sở dữ liệu mặc định của Firestore có tên là{' '}
+                <code className="font-mono-num bg-red-50 px-1 rounded">(default)</code> — hãy để trống biến này (<code className="font-mono-num bg-red-50 px-1 rounded">&quot;&quot;</code>) nếu bạn dùng database mặc định.
+              </div>
+            )}
           </div>
 
           <section className="space-y-2">
