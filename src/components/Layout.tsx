@@ -43,55 +43,72 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
-const NAV_ITEMS: Array<{
+interface NavItem {
   id: WorkspaceTab;
   label: string;
   breadcrumb: string;
   icon: React.ComponentType<{ className?: string }>;
+}
+
+const NAV_SECTIONS: Array<{
+  title: string;
+  items: NavItem[];
 }> = [
   {
-    id: 'dashboard',
-    label: 'Tổng quan giá thành',
-    breadcrumb: 'Bảng điều khiển / Tổng quan giá thành',
-    icon: BarChart3,
+    title: 'Bán hàng',
+    items: [
+      {
+        id: 'sales',
+        label: 'Doanh thu bán hàng',
+        breadcrumb: 'Bán hàng / Doanh thu bán hàng online & Tự giao ship',
+        icon: TrendingUp,
+      },
+      {
+        id: 'sales-history',
+        label: 'Lịch sử bán hàng',
+        breadcrumb: 'Bán hàng / Lịch sử bán hàng & Quản lý giao đơn',
+        icon: ClipboardList,
+      },
+    ],
   },
   {
-    id: 'sales',
-    label: 'Doanh thu bán hàng',
-    breadcrumb: 'Kinh doanh / Doanh thu bán hàng online & Tự giao ship',
-    icon: TrendingUp,
-  },
-  {
-    id: 'sales-history',
-    label: 'Lịch sử bán hàng',
-    breadcrumb: 'Kinh doanh / Lịch sử bán hàng & Quản lý giao đơn',
-    icon: ClipboardList,
-  },
-  {
-    id: 'recipes',
-    label: 'Định lượng & Tính giá',
-    breadcrumb: 'Công thức / Định lượng & Tính giá thành',
-    icon: Calculator,
-  },
-  {
-    id: 'catalog',
-    label: 'Nguyên liệu & Bao bì',
-    breadcrumb: 'Kho dữ liệu / Nguyên vật liệu, Bán thành phẩm, Bao bì & CCDC',
-    icon: Package,
-  },
-  {
-    id: 'fixed-costs',
-    label: 'Chi phí cố định & MB',
-    breadcrumb: 'Vận hành / Chi phí cố định & Mặt bằng',
-    icon: Building2,
-  },
-  {
-    id: 'menu-board',
-    label: 'Quản lý trang Menu',
-    breadcrumb: 'Kinh doanh / Quản lý trang Menu món',
-    icon: BookOpen,
+    title: 'Giá thành',
+    items: [
+      {
+        id: 'dashboard',
+        label: 'Tổng quan giá thành',
+        breadcrumb: 'Giá thành / Tổng quan giá thành',
+        icon: BarChart3,
+      },
+      {
+        id: 'recipes',
+        label: 'Định lượng & Tính giá',
+        breadcrumb: 'Giá thành / Định lượng & Tính giá thành',
+        icon: Calculator,
+      },
+      {
+        id: 'catalog',
+        label: 'Nguyên liệu & Bao bì',
+        breadcrumb: 'Giá thành / Nguyên vật liệu, Bán thành phẩm, Bao bì & CCDC',
+        icon: Package,
+      },
+      {
+        id: 'fixed-costs',
+        label: 'Chi phí cố định & MB',
+        breadcrumb: 'Giá thành / Chi phí cố định & Mặt bằng',
+        icon: Building2,
+      },
+      {
+        id: 'menu-board',
+        label: 'Quản lý trang Menu',
+        breadcrumb: 'Giá thành / Quản lý trang Menu món',
+        icon: BookOpen,
+      },
+    ],
   },
 ];
+
+const ALL_NAV_ITEMS: NavItem[] = NAV_SECTIONS.flatMap((section) => section.items);
 
 export function Layout({
   activeTab,
@@ -121,12 +138,54 @@ export function Layout({
     setDismissedError(null);
   }, [syncError]);
 
-  const currentNav = NAV_ITEMS.find((n) => n.id === activeTab) || NAV_ITEMS[0];
+  const currentNav = ALL_NAV_ITEMS.find((n) => n.id === activeTab) || ALL_NAV_ITEMS[0];
 
   const handleNavClick = (id: WorkspaceTab) => {
     onSelectTab(id);
     setMobileMenuOpen(false);
   };
+
+  const renderNavSections = (isMobile = false) => (
+    <div className="space-y-5">
+      {NAV_SECTIONS.map((section, idx) => (
+        <div
+          key={section.title}
+          className={idx > 0 ? 'pt-4 border-t border-slate-100' : undefined}
+        >
+          <div className="px-3 mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+            {section.title}
+          </div>
+          <div className="space-y-1">
+            {section.items.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => handleNavClick(item.id)}
+                  className={`w-full flex items-center gap-3 px-3 ${
+                    isMobile ? 'py-3' : 'py-2.5'
+                  } rounded-lg text-sm font-medium transition-colors whitespace-nowrap text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 ${
+                    isActive
+                      ? 'bg-teal-50 text-teal-800'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`}
+                >
+                  <Icon
+                    className={`w-4 h-4 shrink-0 ${
+                      isActive ? 'text-teal-700' : 'text-slate-400'
+                    }`}
+                  />
+                  <span className="truncate">{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 
   const syncLabel = !isFirebaseConfigured
     ? 'Lưu cục bộ (Local)'
@@ -256,30 +315,8 @@ export function Layout({
           </span>
         </div>
 
-        <nav className="flex-1 px-3 py-5 space-y-1 overflow-y-auto" aria-label="Điều hướng chính">
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => handleNavClick(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 ${
-                  isActive
-                    ? 'bg-teal-50 text-teal-800'
-                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                }`}
-              >
-                <Icon
-                  className={`w-4 h-4 shrink-0 ${
-                    isActive ? 'text-teal-700' : 'text-slate-400'
-                  }`}
-                />
-                <span className="truncate">{item.label}</span>
-              </button>
-            );
-          })}
+        <nav className="flex-1 px-3 py-5 overflow-y-auto" aria-label="Điều hướng chính">
+          {renderNavSections(false)}
         </nav>
 
         <div className="p-4 border-t border-slate-200 space-y-3">
@@ -364,26 +401,8 @@ export function Layout({
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
-              {NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => handleNavClick(item.id)}
-                    className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
-                      isActive
-                        ? 'bg-teal-50 text-teal-800'
-                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                    }`}
-                  >
-                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-teal-700' : 'text-slate-400'}`} />
-                    <span>{item.label}</span>
-                  </button>
-                );
-              })}
+            <nav className="flex-1 px-3 py-4 overflow-y-auto" aria-label="Điều hướng di động">
+              {renderNavSections(true)}
             </nav>
             <div className="p-4 border-t border-slate-200 space-y-3">
               {renderCloudPanel()}
