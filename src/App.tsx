@@ -12,6 +12,7 @@ import { Layout } from './components/Layout';
 import { MenuBoardView } from './components/MenuBoardView';
 import { RecipeCostingView } from './components/RecipeCostingView';
 import { SalesAnalyticsView } from './components/SalesAnalyticsView';
+import { SalesHistoryView } from './components/SalesHistoryView';
 import { useCostingStore } from './hooks/useCostingStore';
 import { WorkspaceTab } from './types/costing';
 
@@ -118,9 +119,19 @@ export default function App() {
             catalogMap={store.catalogMap}
             totalMonthlyOverhead={store.overheadSummary.totalMonthlyOverhead}
             onAddSalesOrder={store.addSalesOrder}
+            onUpdateSalesTarget={store.updateSalesTarget}
+            onOpenSalesHistory={() => setActiveTab('sales-history')}
+          />
+        )}
+
+        {activeTab === 'sales-history' && (
+          <SalesHistoryView
+            salesOrders={store.salesOrders}
+            menuItems={store.menuItems}
+            catalogMap={store.catalogMap}
+            onAddSalesOrder={store.addSalesOrder}
             onUpdateSalesOrder={store.updateSalesOrder}
             onDeleteSalesOrder={store.deleteSalesOrder}
-            onUpdateSalesTarget={store.updateSalesTarget}
           />
         )}
 

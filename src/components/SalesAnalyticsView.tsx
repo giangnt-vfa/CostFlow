@@ -1,13 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import {
   ArrowDownRight,
+  ArrowRight,
   ArrowUpDown,
   ArrowUpRight,
   Download,
   Plus,
   RotateCcw,
   Search,
-  Trash2,
   X,
 } from 'lucide-react';
 import {
@@ -52,7 +52,6 @@ import {
   buildTrendSeries,
   calcDeltaPct,
   computeSalesTargetPlan,
-  exportSalesOrdersCSV,
   exportSkuPerformanceCSV,
   formatISODate,
   resolveDateWindow,
@@ -67,9 +66,8 @@ interface SalesAnalyticsViewProps {
   catalogMap: Map<string, CatalogItem>;
   totalMonthlyOverhead: number;
   onAddSalesOrder: (order: Omit<SalesOrder, 'id'>) => void;
-  onUpdateSalesOrder: (id: string, patch: Partial<SalesOrder>) => void;
-  onDeleteSalesOrder: (id: string) => void;
   onUpdateSalesTarget: (patch: Partial<SalesTargetConfig>) => void;
+  onOpenSalesHistory?: () => void;
 }
 
 const DATE_PRESETS: Array<{ id: DateRangePreset; label: string }> = [
@@ -82,7 +80,6 @@ const DATE_PRESETS: Array<{ id: DateRangePreset; label: string }> = [
 ];
 
 type SkuSortKey = 'netRevenue' | 'unitsSold' | 'grossProfit' | 'marginPct' | 'revenueSharePct';
-type OrderSortKey = 'date' | 'net' | 'grossProfit';
 
 function formatCompactVND(value: number): string {
   const abs = Math.abs(value);
@@ -132,9 +129,8 @@ export function SalesAnalyticsView({
   catalogMap,
   totalMonthlyOverhead,
   onAddSalesOrder,
-  onUpdateSalesOrder,
-  onDeleteSalesOrder,
   onUpdateSalesTarget,
+  onOpenSalesHistory,
 }: SalesAnalyticsViewProps) {
   const todayISO = useMemo(() => formatISODate(new Date()), []);
 
@@ -153,18 +149,12 @@ export function SalesAnalyticsView({
   const [granularity, setGranularity] = useState<TrendGranularity>('day');
   const [showProfitLine, setShowProfitLine] = useState(false);
   const [productRankMode, setProductRankMode] = useState<'top' | 'slow'>('top');
-  const [tableTab, setTableTab] = useState<'sku' | 'orders'>('sku');
   const [tableSearch, setTableSearch] = useState('');
   const [skuSort, setSkuSort] = useState<{ key: SkuSortKey; dir: 'desc' | 'asc' }>({
     key: 'netRevenue',
     dir: 'desc',
   });
-  const [orderSort, setOrderSort] = useState<{ key: OrderSortKey; dir: 'desc' | 'asc' }>({
-    key: 'date',
-    dir: 'desc',
-  });
   const [orderModalOpen, setOrderModalOpen] = useState(false);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const categories = useMemo(() => {
     const set = new Set<string>();
@@ -323,7 +313,7 @@ export function SalesAnalyticsView({
     salesTarget.estimatedAppCommissionPct,
   ]);
 
-  // 7. Granular Tables (SKU Performance & Orders Ledger)
+  // 7. Granular SKU Performance Table
   const filteredSkuRows = useMemo(() => {
     const q = normalizeVietnamese(tableSearch);
     const list = allProductPerf.filter((r) => {
@@ -338,32 +328,6 @@ export function SalesAnalyticsView({
     const mult = skuSort.dir === 'desc' ? -1 : 1;
     return [...list].sort((a, b) => (a[skuSort.key] - b[skuSort.key]) * mult);
   }, [allProductPerf, filters.menuItemId, tableSearch, skuSort]);
-
-  const filteredOrderRows = useMemo(() => {
-    const q = normalizeVietnamese(tableSearch);
-    const list = currentAttributed.filter((row) => {
-      if (!q) return true;
-      const o = row.order;
-      return (
-        normalizeVietnamese(o.orderCode).includes(q) ||
-        normalizeVietnamese(o.source).includes(q) ||
-        normalizeVietnamese(o.deliveryZone).includes(q) ||
-        normalizeVietnamese(o.note).includes(q) ||
-        o.items.some((it) => normalizeVietnamese(it.name).includes(q))
-      );
-    });
-    const mult = orderSort.dir === 'desc' ? -1 : 1;
-    return [...list].sort((a, b) => {
-      if (orderSort.key === 'date') {
-        return (
-          (a.order.date.localeCompare(b.order.date) ||
-            a.order.orderCode.localeCompare(b.order.orderCode)) * mult
-        );
-      }
-      if (orderSort.key === 'net') return (a.matchedNet - b.matchedNet) * mult;
-      return (a.matchedGrossProfit - b.matchedGrossProfit) * mult;
-    });
-  }, [currentAttributed, tableSearch, orderSort]);
 
   const hasActiveSecondaryFilters =
     filters.source !== 'Tất cả' ||
@@ -399,27 +363,14 @@ export function SalesAnalyticsView({
   };
 
   const handleExportActiveTable = () => {
-    if (tableTab === 'sku') {
-      triggerDownloadCSV(
-        `hieu_suat_mon_${dateWindow.start}_${dateWindow.end}.csv`,
-        exportSkuPerformanceCSV(filteredSkuRows)
-      );
-    } else {
-      triggerDownloadCSV(
-        `nhat_ky_don_online_${dateWindow.start}_${dateWindow.end}.csv`,
-        exportSalesOrdersCSV(filteredOrderRows.map((r) => r.order))
-      );
-    }
+    triggerDownloadCSV(
+      `hieu_suat_mon_${dateWindow.start}_${dateWindow.end}.csv`,
+      exportSkuPerformanceCSV(filteredSkuRows)
+    );
   };
 
   const toggleSkuSort = (key: SkuSortKey) => {
     setSkuSort((prev) =>
-      prev.key === key ? { key, dir: prev.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }
-    );
-  };
-
-  const toggleOrderSort = (key: OrderSortKey) => {
-    setOrderSort((prev) =>
       prev.key === key ? { key, dir: prev.dir === 'desc' ? 'asc' : 'desc' } : { key, dir: 'desc' }
     );
   };
@@ -1406,32 +1357,28 @@ export function SalesAnalyticsView({
         </div>
       </section>
 
-      {/* 5. GRANULAR DATA TABLE (SKU Performance & Orders Ledger) */}
+      {/* 5. GRANULAR DATA TABLE (SKU Performance) */}
       <section className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         <div className="p-5 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg self-start">
-            <button
-              type="button"
-              onClick={() => setTableTab('sku')}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
-                tableTab === 'sku'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Hiệu suất từng món ({filteredSkuRows.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setTableTab('orders')}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
-                tableTab === 'orders'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              Nhật ký đơn bán online ({filteredOrderRows.length})
-            </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <div>
+              <h2 className="font-display text-base font-bold text-slate-900">
+                Hiệu suất từng món ({filteredSkuRows.length})
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Nhấp vào một dòng bất kỳ để lọc nhanh biểu đồ theo món đó
+              </p>
+            </div>
+            {onOpenSalesHistory && (
+              <button
+                type="button"
+                onClick={onOpenSalesHistory}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg transition-colors whitespace-nowrap"
+              >
+                <span>Mở Lịch sử bán hàng ({salesOrders.length} đơn)</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
@@ -1441,11 +1388,7 @@ export function SalesAnalyticsView({
                 type="text"
                 value={tableSearch}
                 onChange={(e) => setTableSearch(e.target.value)}
-                placeholder={
-                  tableTab === 'sku'
-                    ? 'Tìm mã hoặc tên món...'
-                    : 'Tìm mã đơn, món, khu vực, ghi chú...'
-                }
+                placeholder="Tìm mã hoặc tên món..."
                 className="w-full sm:w-72 pl-9 pr-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600"
               />
             </div>
@@ -1460,284 +1403,118 @@ export function SalesAnalyticsView({
           </div>
         </div>
 
-        {tableTab === 'sku' ? (
-          filteredSkuRows.length === 0 ? (
-            <div className="p-12 text-center text-sm text-slate-500">
-              Không tìm thấy dữ liệu món phù hợp với bộ lọc hiện tại.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200 text-xs font-medium text-slate-500">
-                    <th className="py-3 px-4 whitespace-nowrap">Mã / Tên món</th>
-                    <th className="py-3 px-3 text-right whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => toggleSkuSort('unitsSold')}
-                        className="inline-flex items-center gap-1 hover:text-slate-900"
-                      >
-                        <span>SL bán</span>
-                        <ArrowUpDown className="w-3 h-3" />
-                      </button>
-                    </th>
-                    <th className="py-3 px-3 text-right whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => toggleSkuSort('netRevenue')}
-                        className="inline-flex items-center gap-1 hover:text-slate-900"
-                      >
-                        <span>Doanh thu thuần</span>
-                        <ArrowUpDown className="w-3 h-3" />
-                      </button>
-                    </th>
-                    <th className="py-3 px-3 text-right whitespace-nowrap">Giá vốn (COGS)</th>
-                    <th className="py-3 px-3 text-right whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => toggleSkuSort('grossProfit')}
-                        className="inline-flex items-center gap-1 hover:text-slate-900"
-                      >
-                        <span>Lợi nhuận gộp</span>
-                        <ArrowUpDown className="w-3 h-3" />
-                      </button>
-                    </th>
-                    <th className="py-3 px-3 text-right whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => toggleSkuSort('marginPct')}
-                        className="inline-flex items-center gap-1 hover:text-slate-900"
-                      >
-                        <span>Biên LN</span>
-                        <ArrowUpDown className="w-3 h-3" />
-                      </button>
-                    </th>
-                    <th className="py-3 px-4 text-right whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => toggleSkuSort('revenueSharePct')}
-                        className="inline-flex items-center gap-1 hover:text-slate-900"
-                      >
-                        <span>Tỷ trọng DT</span>
-                        <ArrowUpDown className="w-3 h-3" />
-                      </button>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-sm">
-                  {filteredSkuRows.map((row) => {
-                    const isDrilled = filters.menuItemId === row.menuItemId;
-                    return (
-                      <tr
-                        key={row.menuItemId}
-                        onClick={() =>
-                          setFilters((prev) => ({
-                            ...prev,
-                            menuItemId: prev.menuItemId === row.menuItemId ? 'Tất cả' : row.menuItemId,
-                          }))
-                        }
-                        className={`cursor-pointer transition-colors ${
-                          isDrilled ? 'bg-teal-50/60' : 'hover:bg-slate-50'
-                        }`}
-                      >
-                        <td className="py-3 px-4">
-                          <div className="font-medium text-slate-900">{row.name}</div>
-                          <div className="text-xs text-slate-500">
-                            {row.code} · {row.category}
-                          </div>
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono-num text-slate-900 whitespace-nowrap">
-                          {formatNumber(row.unitsSold, 0)}
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono-num font-semibold text-slate-900 whitespace-nowrap">
-                          {formatVND(row.netRevenue, false)}
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono-num text-slate-600 whitespace-nowrap">
-                          {formatVND(row.cogs, false)}
-                        </td>
-                        <td
-                          className={`py-3 px-3 text-right font-mono-num font-semibold whitespace-nowrap ${
-                            row.grossProfit >= 0 ? 'text-emerald-700' : 'text-red-600'
-                          }`}
-                        >
-                          {formatVND(row.grossProfit, false)}
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono-num text-slate-700 whitespace-nowrap">
-                          {formatPercent(row.marginPct)}
-                        </td>
-                        <td className="py-3 px-4 text-right font-mono-num text-slate-600 whitespace-nowrap">
-                          {formatPercent(row.revenueSharePct)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )
-        ) : filteredOrderRows.length === 0 ? (
-          <div className="p-12 text-center space-y-2">
-            <p className="text-sm font-medium text-slate-900">
-              Chưa có đơn hàng nào khớp bộ lọc hiện tại
-            </p>
-            <p className="text-xs text-slate-500">
-              Ghi nhận đơn bán online đầu tiên hoặc mở rộng khoảng ngày để tra cứu.
-            </p>
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => setOrderModalOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-teal-700 hover:bg-teal-800 text-white text-xs font-medium rounded-lg"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Ghi nhận đơn bán</span>
-              </button>
-            </div>
+        {filteredSkuRows.length === 0 ? (
+          <div className="p-12 text-center text-sm text-slate-500">
+            Không tìm thấy dữ liệu món phù hợp với bộ lọc hiện tại.
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-xs font-medium text-slate-500">
-                  <th className="py-3 px-4 whitespace-nowrap">
-                    <button
-                      type="button"
-                      onClick={() => toggleOrderSort('date')}
-                      className="inline-flex items-center gap-1 hover:text-slate-900"
-                    >
-                      <span>Mã đơn / Ngày</span>
-                      <ArrowUpDown className="w-3 h-3" />
-                    </button>
-                  </th>
-                  <th className="py-3 px-3 whitespace-nowrap">Nguồn &amp; Khu vực ship</th>
-                  <th className="py-3 px-3 whitespace-nowrap">Chi tiết món</th>
+                  <th className="py-3 px-4 whitespace-nowrap">Mã / Tên món</th>
                   <th className="py-3 px-3 text-right whitespace-nowrap">
                     <button
                       type="button"
-                      onClick={() => toggleOrderSort('net')}
+                      onClick={() => toggleSkuSort('unitsSold')}
                       className="inline-flex items-center gap-1 hover:text-slate-900"
                     >
-                      <span>Thực thu (Net)</span>
+                      <span>SL bán</span>
                       <ArrowUpDown className="w-3 h-3" />
                     </button>
                   </th>
                   <th className="py-3 px-3 text-right whitespace-nowrap">
                     <button
                       type="button"
-                      onClick={() => toggleOrderSort('grossProfit')}
+                      onClick={() => toggleSkuSort('netRevenue')}
                       className="inline-flex items-center gap-1 hover:text-slate-900"
                     >
-                      <span>Lãi gộp</span>
+                      <span>Doanh thu thuần</span>
                       <ArrowUpDown className="w-3 h-3" />
                     </button>
                   </th>
-                  <th className="py-3 px-3 whitespace-nowrap">Trạng thái</th>
-                  <th className="py-3 px-4 text-right whitespace-nowrap">Thao tác</th>
+                  <th className="py-3 px-3 text-right whitespace-nowrap">Giá vốn (COGS)</th>
+                  <th className="py-3 px-3 text-right whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => toggleSkuSort('grossProfit')}
+                      className="inline-flex items-center gap-1 hover:text-slate-900"
+                    >
+                      <span>Lợi nhuận gộp</span>
+                      <ArrowUpDown className="w-3 h-3" />
+                    </button>
+                  </th>
+                  <th className="py-3 px-3 text-right whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => toggleSkuSort('marginPct')}
+                      className="inline-flex items-center gap-1 hover:text-slate-900"
+                    >
+                      <span>Biên LN</span>
+                      <ArrowUpDown className="w-3 h-3" />
+                    </button>
+                  </th>
+                  <th className="py-3 px-4 text-right whitespace-nowrap">
+                    <button
+                      type="button"
+                      onClick={() => toggleSkuSort('revenueSharePct')}
+                      className="inline-flex items-center gap-1 hover:text-slate-900"
+                    >
+                      <span>Tỷ trọng DT</span>
+                      <ArrowUpDown className="w-3 h-3" />
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
-                {filteredOrderRows.slice(0, 80).map((row) => {
-                  const o = row.order;
-                  const isCancelled = o.status === 'cancelled';
-                  const itemsPreview = o.items
-                    .map((it) => `${it.name} ×${it.quantity}`)
-                    .join(', ');
+                {filteredSkuRows.map((row) => {
+                  const isDrilled = filters.menuItemId === row.menuItemId;
                   return (
-                    <tr key={o.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="py-3 px-4 whitespace-nowrap">
-                        <div className="font-mono-num font-semibold text-slate-900">
-                          {o.orderCode}
-                        </div>
-                        <div className="text-xs text-slate-500 font-mono-num">
-                          {o.date} · {o.customerSegment === 'new' ? 'Khách mới' : 'Khách quay lại'}
+                    <tr
+                      key={row.menuItemId}
+                      onClick={() =>
+                        setFilters((prev) => ({
+                          ...prev,
+                          menuItemId: prev.menuItemId === row.menuItemId ? 'Tất cả' : row.menuItemId,
+                        }))
+                      }
+                      className={`cursor-pointer transition-colors ${
+                        isDrilled ? 'bg-teal-50/60' : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <td className="py-3 px-4">
+                        <div className="font-medium text-slate-900">{row.name}</div>
+                        <div className="text-xs text-slate-500">
+                          {row.code} · {row.category}
                         </div>
                       </td>
-                      <td className="py-3 px-3 whitespace-nowrap">
-                        <div className="text-slate-800 text-xs font-medium">{o.source}</div>
-                        <div className="text-xs text-slate-500">{o.deliveryZone}</div>
-                      </td>
-                      <td className="py-3 px-3 max-w-xs">
-                        <div className="text-xs text-slate-800 truncate" title={itemsPreview}>
-                          {itemsPreview}
-                        </div>
-                        {o.note && (
-                          <div className="text-[11px] text-slate-400 truncate" title={o.note}>
-                            {o.note}
-                          </div>
-                        )}
+                      <td className="py-3 px-3 text-right font-mono-num text-slate-900 whitespace-nowrap">
+                        {formatNumber(row.unitsSold, 0)}
                       </td>
                       <td className="py-3 px-3 text-right font-mono-num font-semibold text-slate-900 whitespace-nowrap">
-                        {formatVND(row.matchedNet, false)}
+                        {formatVND(row.netRevenue, false)}
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono-num text-slate-600 whitespace-nowrap">
+                        {formatVND(row.cogs, false)}
                       </td>
                       <td
                         className={`py-3 px-3 text-right font-mono-num font-semibold whitespace-nowrap ${
-                          isCancelled
-                            ? 'text-slate-400'
-                            : row.matchedGrossProfit >= 0
-                              ? 'text-emerald-700'
-                              : 'text-red-600'
+                          row.grossProfit >= 0 ? 'text-emerald-700' : 'text-red-600'
                         }`}
                       >
-                        {formatVND(row.matchedGrossProfit, false)}
+                        {formatVND(row.grossProfit, false)}
                       </td>
-                      <td className="py-3 px-3 whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onUpdateSalesOrder(o.id, {
-                              status: isCancelled ? 'completed' : 'cancelled',
-                            })
-                          }
-                          className={`text-xs font-medium underline-offset-2 hover:underline ${
-                            isCancelled ? 'text-red-600' : 'text-emerald-700'
-                          }`}
-                          title="Nhấp để chuyển trạng thái Hoàn tất / Hủy đơn"
-                        >
-                          {isCancelled ? 'Đã hủy / Hoàn' : 'Hoàn tất'}
-                        </button>
+                      <td className="py-3 px-3 text-right font-mono-num text-slate-700 whitespace-nowrap">
+                        {formatPercent(row.marginPct)}
                       </td>
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
-                        {confirmDeleteId === o.id ? (
-                          <div className="inline-flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onDeleteSalesOrder(o.id);
-                                setConfirmDeleteId(null);
-                              }}
-                              className="px-2 py-1 text-xs font-medium bg-red-600 hover:bg-red-700 text-white rounded"
-                            >
-                              Xóa
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteId(null)}
-                              className="px-2 py-1 text-xs font-medium bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 rounded"
-                            >
-                              Hủy
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteId(o.id)}
-                            className="p-1.5 text-slate-400 hover:text-red-600 rounded-lg"
-                            aria-label={`Xóa đơn ${o.orderCode}`}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
+                      <td className="py-3 px-4 text-right font-mono-num text-slate-600 whitespace-nowrap">
+                        {formatPercent(row.revenueSharePct)}
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
-            {filteredOrderRows.length > 80 && (
-              <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 text-xs text-slate-500">
-                Đang hiển thị 80 / {filteredOrderRows.length} đơn gần nhất. Dùng ô tìm kiếm hoặc Xuất CSV để xem toàn bộ.
-              </div>
-            )}
           </div>
         )}
       </section>
@@ -1747,6 +1524,7 @@ export function SalesAnalyticsView({
         onClose={() => setOrderModalOpen(false)}
         menuItems={menuItems}
         catalogMap={catalogMap}
+        existingOrders={salesOrders}
         onCreateOrder={onAddSalesOrder}
       />
     </div>

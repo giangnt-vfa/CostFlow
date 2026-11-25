@@ -11,17 +11,19 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
-import { INITIAL_SALES_TARGET } from '../data/initialSalesData';
+import { INITIAL_SALES_TARGET, SHIPPING_CARRIERS } from '../data/initialSalesData';
 import { OperationType, db, handleFirestoreError } from '../firebase';
 import {
   CatalogItem,
   FixedCostItem,
+  FulfillmentStatus,
   MenuItem,
   OverheadConfig,
   RecipeLineItem,
   SalesOrder,
   SalesOrderItem,
   SalesTargetConfig,
+  ShippingCarrier,
 } from '../types/costing';
 
 export function sanitizeId(raw: string, fallbackPrefix = 'doc'): string {
@@ -226,6 +228,30 @@ export function buildSalesOrderPayload(
     ? order.date
     : new Date().toISOString().slice(0, 10);
 
+  const validDeliveryDate =
+    order.deliveryDate && /^\d{4}-\d{2}-\d{2}$/.test(order.deliveryDate)
+      ? order.deliveryDate
+      : '';
+
+  const validCarriers = new Set([
+    'Tự giao',
+    'Xanh SM',
+    'Grab Express',
+    'Ahamove',
+    'Be Delivery',
+    'Lalamove',
+    'GHTK / GHN',
+    'Khác',
+  ]);
+
+  const validFulfillment = new Set([
+    'pending',
+    'confirmed',
+    'delivering',
+    'completed',
+    'cancelled',
+  ]);
+
   const payload: Record<string, unknown> = {
     ownerId,
     orderCode: clampString(order.orderCode, 40, `DH-${Date.now().toString().slice(-5)}`),
@@ -241,6 +267,38 @@ export function buildSalesOrderPayload(
     note: clampString(order.note, 500, ''),
     updatedAt: serverTimestamp(),
   };
+
+  if (order.customerName !== undefined) {
+    payload.customerName = clampString(order.customerName, 120, '');
+  }
+  if (order.customerPhone !== undefined) {
+    payload.customerPhone = clampString(order.customerPhone, 30, '');
+  }
+  if (order.customerAddress !== undefined) {
+    payload.customerAddress = clampString(order.customerAddress, 300, '');
+  }
+  if (order.deliveryDate !== undefined) {
+    payload.deliveryDate = validDeliveryDate;
+  }
+  if (order.deliverySlot !== undefined) {
+    payload.deliverySlot = clampString(order.deliverySlot, 40, '');
+  }
+  if (order.carrier !== undefined && validCarriers.has(order.carrier)) {
+    payload.carrier = order.carrier;
+  }
+  if (order.carrierTrackingCode !== undefined) {
+    payload.carrierTrackingCode = clampString(order.carrierTrackingCode, 80, '');
+  }
+  if (order.paymentMethod === 'transfer' || order.paymentMethod === 'cod') {
+    payload.paymentMethod = order.paymentMethod;
+  }
+  if (order.paymentStatus === 'paid' || order.paymentStatus === 'unpaid') {
+    payload.paymentStatus = order.paymentStatus;
+  }
+  if (order.fulfillmentStatus && validFulfillment.has(order.fulfillmentStatus)) {
+    payload.fulfillmentStatus = order.fulfillmentStatus;
+  }
+
   if (isCreate) {
     payload.createdAt = serverTimestamp();
   }
@@ -682,6 +740,35 @@ export function subscribeToUserWorkspace(
               shippingFeeCollected: Number(d.shippingFeeCollected) || 0,
               shippingCostActual: Number(d.shippingCostActual) || 0,
               note: String(d.note || ''),
+              customerName: typeof d.customerName === 'string' ? d.customerName : undefined,
+              customerPhone: typeof d.customerPhone === 'string' ? d.customerPhone : undefined,
+              customerAddress:
+                typeof d.customerAddress === 'string' ? d.customerAddress : undefined,
+              deliveryDate: typeof d.deliveryDate === 'string' ? d.deliveryDate : undefined,
+              deliverySlot: typeof d.deliverySlot === 'string' ? d.deliverySlot : undefined,
+              carrier:
+                typeof d.carrier === 'string' &&
+                (SHIPPING_CARRIERS as readonly string[]).includes(d.carrier)
+                  ? (d.carrier as ShippingCarrier)
+                  : undefined,
+              carrierTrackingCode:
+                typeof d.carrierTrackingCode === 'string' ? d.carrierTrackingCode : undefined,
+              paymentMethod:
+                d.paymentMethod === 'transfer' || d.paymentMethod === 'cod'
+                  ? d.paymentMethod
+                  : undefined,
+              paymentStatus:
+                d.paymentStatus === 'paid' || d.paymentStatus === 'unpaid'
+                  ? d.paymentStatus
+                  : undefined,
+              fulfillmentStatus:
+                d.fulfillmentStatus === 'pending' ||
+                d.fulfillmentStatus === 'confirmed' ||
+                d.fulfillmentStatus === 'delivering' ||
+                d.fulfillmentStatus === 'completed' ||
+                d.fulfillmentStatus === 'cancelled'
+                  ? (d.fulfillmentStatus as FulfillmentStatus)
+                  : undefined,
             };
           });
           list.sort((a, b) => b.date.localeCompare(a.date) || b.orderCode.localeCompare(a.orderCode));

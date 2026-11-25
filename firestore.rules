@@ -274,6 +274,16 @@ service cloud.firestore {
           'shippingFeeCollected',
           'shippingCostActual',
           'note',
+          'customerName',
+          'customerPhone',
+          'customerAddress',
+          'deliveryDate',
+          'deliverySlot',
+          'carrier',
+          'carrierTrackingCode',
+          'paymentMethod',
+          'paymentStatus',
+          'fulfillmentStatus',
           'createdAt',
           'updatedAt'
         ])
@@ -282,7 +292,7 @@ service cloud.firestore {
         && data.orderCode is string && data.orderCode.size() >= 1 && data.orderCode.size() <= 40
         && data.date is string && data.date.size() == 10 && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
         && data.source is string
-        && data.source in ['Zalo / Tin nhắn', 'Facebook / Messenger', 'Website đặt trực tiếp', 'Khách quen / Hotline']
+        && data.source in ['Zalo / Tin nhắn', 'Facebook / Messenger', 'Threads', 'Website đặt trực tiếp', 'Khách quen / Hotline']
         && data.deliveryZone is string
         && data.deliveryZone in ['Nội thành (<3km)', 'Trung tâm (3–7km)', 'Ngoại thành (>7km)']
         && data.customerSegment is string && data.customerSegment in ['new', 'returning']
@@ -293,6 +303,16 @@ service cloud.firestore {
         && data.shippingFeeCollected is number && data.shippingFeeCollected >= 0 && data.shippingFeeCollected <= 10000000
         && data.shippingCostActual is number && data.shippingCostActual >= 0 && data.shippingCostActual <= 10000000
         && data.note is string && data.note.size() <= 500
+        && (!('customerName' in data) || (data.customerName is string && data.customerName.size() <= 120))
+        && (!('customerPhone' in data) || (data.customerPhone is string && data.customerPhone.size() <= 30))
+        && (!('customerAddress' in data) || (data.customerAddress is string && data.customerAddress.size() <= 300))
+        && (!('deliveryDate' in data) || (data.deliveryDate is string && (data.deliveryDate.size() == 0 || (data.deliveryDate.size() == 10 && data.deliveryDate.matches('^\\d{4}-\\d{2}-\\d{2}$')))))
+        && (!('deliverySlot' in data) || (data.deliverySlot is string && data.deliverySlot.size() <= 40))
+        && (!('carrier' in data) || (data.carrier is string && data.carrier in ['Tự giao', 'Xanh SM', 'Grab Express', 'Ahamove', 'Be Delivery', 'Lalamove', 'GHTK / GHN', 'Khác']))
+        && (!('carrierTrackingCode' in data) || (data.carrierTrackingCode is string && data.carrierTrackingCode.size() <= 80))
+        && (!('paymentMethod' in data) || (data.paymentMethod is string && data.paymentMethod in ['transfer', 'cod']))
+        && (!('paymentStatus' in data) || (data.paymentStatus is string && data.paymentStatus in ['paid', 'unpaid']))
+        && (!('fulfillmentStatus' in data) || (data.fulfillmentStatus is string && data.fulfillmentStatus in ['pending', 'confirmed', 'delivering', 'completed', 'cancelled']))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -463,6 +483,16 @@ service cloud.firestore {
             'shippingFeeCollected',
             'shippingCostActual',
             'note',
+            'customerName',
+            'customerPhone',
+            'customerAddress',
+            'deliveryDate',
+            'deliverySlot',
+            'carrier',
+            'carrierTrackingCode',
+            'paymentMethod',
+            'paymentStatus',
+            'fulfillmentStatus',
             'updatedAt'
           ]);
         allow delete: if isValidId(userId) && isValidId(orderId) && isOwner(userId);

@@ -696,14 +696,277 @@ export function exportSkuPerformanceCSV(rows: ProductPerformanceRow[]): string {
     .join('\n');
 }
 
+export function getEffectiveFulfillmentStatus(
+  order: SalesOrder
+): 'pending' | 'confirmed' | 'delivering' | 'completed' | 'cancelled' {
+  if (order.status === 'cancelled') return 'cancelled';
+  return order.fulfillmentStatus || 'completed';
+}
+
+export function getOrderFinancials(order: SalesOrder) {
+  const gross = order.items.reduce((s, it) => s + it.unitPrice * it.quantity, 0);
+  const cogs = order.items.reduce((s, it) => s + it.unitCogs * it.quantity, 0);
+  const totalUnits = order.items.reduce((s, it) => s + it.quantity, 0);
+  const isCancelled = order.status === 'cancelled';
+  const discount = isCancelled ? 0 : Math.max(0, order.discountAmount || 0);
+  const net = isCancelled ? 0 : Math.max(0, gross - discount);
+  const shipCollected = isCancelled ? 0 : Math.max(0, order.shippingFeeCollected || 0);
+  const shipActual = isCancelled ? 0 : Math.max(0, order.shippingCostActual || 0);
+  const shippingSubsidy = isCancelled ? 0 : Math.max(0, shipActual - shipCollected);
+  const customerPayable = isCancelled ? 0 : net + shipCollected;
+  const grossProfit = isCancelled ? 0 : net - cogs - shippingSubsidy;
+  return {
+    gross,
+    cogs,
+    totalUnits,
+    discount,
+    net,
+    shipCollected,
+    shipActual,
+    shippingSubsidy,
+    customerPayable,
+    grossProfit,
+  };
+}
+
+export function buildOrderConfirmationMessage(order: SalesOrder): string {
+  const fin = getOrderFinancials(order);
+  const deliveryDate = order.deliveryDate || order.date;
+  const lines = [
+    `🍄 CON BÀ BẢY FOOD — XÁC NHẬN ĐƠN HÀNG ${order.orderCode}`,
+    order.customerName ? `Khách hàng: ${order.customerName}${order.customerPhone ? ` (${order.customerPhone})` : ''}` : '',
+    order.customerAddress ? `Địa chỉ giao: ${order.customerAddress}` : '',
+    `Lịch giao: ${deliveryDate}${order.deliverySlot ? ` · ${order.deliverySlot}` : ''}`,
+    order.carrier
+      ? `Vận chuyển: ${order.carrier}${order.carrierTrackingCode ? ` (Mã vận đơn: ${order.carrierTrackingCode})` : ''}`
+      : '',
+    '',
+    'Chi tiết món:',
+    ...order.items.map(
+      (it) =>
+        `- ${it.quantity}× ${it.name}: ${(it.unitPrice * it.quantity).toLocaleString('vi-VN')}đ`
+    ),
+    '',
+    fin.discount > 0 ? `Giảm giá: -${fin.discount.toLocaleString('vi-VN')}đ` : '',
+    `Phí ship: ${fin.shipCollected === 0 ? 'Miễn phí (Freeship)' : `${fin.shipCollected.toLocaleString('vi-VN')}đ`}`,
+    `TỔNG THANH TOÁN: ${fin.customerPayable.toLocaleString('vi-VN')}đ`,
+    `Thanh toán: ${
+      order.paymentStatus === 'paid'
+        ? 'Đã thanh toán'
+        : order.paymentMethod === 'cod'
+          ? 'Thu tiền mặt khi nhận hàng (COD)'
+          : 'Chuyển khoản xác nhận đơn'
+    }`,
+    order.note ? `Ghi chú: ${order.note}` : '',
+    '',
+    'Cảm ơn bạn đã ủng hộ Con Bà Bảy Food!',
+  ];
+  return lines.filter((l, idx, arr) => !(l === '' && arr[idx - 1] === '')).join('\n').trim();
+}
+
+export function downloadOrderReceiptImage(order: SalesOrder): void {
+  const fin = getOrderFinancials(order);
+  const width = 680;
+  const baseHeight = 470 + order.items.length * 42 + (order.note ? 44 : 0);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = baseHeight;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  // Clean crisp white receipt surface
+  ctx.fillStyle = '#FFFFFF';
+  ctx.fillRect(0, 0, width, baseHeight);
+
+  // Top subtle accent bar
+  ctx.fillStyle = '#0F766E';
+  ctx.fillRect(0, 0, width, 10);
+
+  let y = 52;
+  ctx.fillStyle = '#0F172A';
+  ctx.font = 'bold 24px "Plus Jakarta Sans", sans-serif';
+  ctx.fillText('CON BÀ BẢY FOOD', 40, y);
+
+  ctx.fillStyle = '#64748B';
+  ctx.font = '14px "Plus Jakarta Sans", sans-serif';
+  ctx.fillText('HÓA ĐƠN XÁC NHẬN ĐƠN HÀNG ONLINE', 40, y + 24);
+
+  // Order code on right
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#0F766E';
+  ctx.font = 'bold 18px monospace';
+  ctx.fillText(order.orderCode, width - 40, y);
+  ctx.fillStyle = '#64748B';
+  ctx.font = '13px monospace';
+  ctx.fillText(`Giao: ${order.deliveryDate || order.date}`, width - 40, y + 22);
+  ctx.textAlign = 'left';
+
+  y += 52;
+  ctx.strokeStyle = '#E2E8F0';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(40, y);
+  ctx.lineTo(width - 40, y);
+  ctx.stroke();
+
+  y += 28;
+  ctx.fillStyle = '#334155';
+  ctx.font = '14px "Plus Jakarta Sans", sans-serif';
+  if (order.customerName || order.customerPhone) {
+    ctx.fillText(
+      `Khách hàng: ${order.customerName || 'Khách lẻ'}${order.customerPhone ? ` · ${order.customerPhone}` : ''}`,
+      40,
+      y
+    );
+    y += 24;
+  }
+  if (order.customerAddress) {
+    ctx.fillText(`Địa chỉ: ${order.customerAddress.slice(0, 62)}`, 40, y);
+    y += 24;
+  }
+  const shipMeta = [
+    order.deliverySlot ? `Khung giờ: ${order.deliverySlot}` : '',
+    order.carrier ? `ĐVVC: ${order.carrier}` : '',
+    order.carrierTrackingCode ? `Mã ship: ${order.carrierTrackingCode}` : '',
+  ]
+    .filter(Boolean)
+    .join('  ·  ');
+  if (shipMeta) {
+    ctx.fillStyle = '#475569';
+    ctx.fillText(shipMeta, 40, y);
+    y += 24;
+  }
+
+  y += 8;
+  ctx.strokeStyle = '#E2E8F0';
+  ctx.beginPath();
+  ctx.moveTo(40, y);
+  ctx.lineTo(width - 40, y);
+  ctx.stroke();
+
+  // Table header
+  y += 26;
+  ctx.fillStyle = '#64748B';
+  ctx.font = 'bold 12px "Plus Jakarta Sans", sans-serif';
+  ctx.fillText('MÓN ĐẶT', 40, y);
+  ctx.textAlign = 'right';
+  ctx.fillText('SL', 470, y);
+  ctx.fillText('THÀNH TIỀN', width - 40, y);
+  ctx.textAlign = 'left';
+
+  y += 16;
+  for (const it of order.items) {
+    y += 28;
+    ctx.fillStyle = '#0F172A';
+    ctx.font = '15px "Plus Jakarta Sans", sans-serif';
+    ctx.fillText(it.name.slice(0, 42), 40, y);
+    ctx.textAlign = 'right';
+    ctx.font = '15px monospace';
+    ctx.fillText(`×${it.quantity}`, 470, y);
+    ctx.fillText(`${(it.unitPrice * it.quantity).toLocaleString('vi-VN')} đ`, width - 40, y);
+    ctx.textAlign = 'left';
+  }
+
+  y += 26;
+  ctx.strokeStyle = '#E2E8F0';
+  ctx.beginPath();
+  ctx.moveTo(40, y);
+  ctx.lineTo(width - 40, y);
+  ctx.stroke();
+
+  y += 28;
+  ctx.font = '14px "Plus Jakarta Sans", sans-serif';
+  ctx.fillStyle = '#475569';
+  ctx.fillText('Tạm tính tiền món', 40, y);
+  ctx.textAlign = 'right';
+  ctx.font = '14px monospace';
+  ctx.fillText(`${fin.gross.toLocaleString('vi-VN')} đ`, width - 40, y);
+  ctx.textAlign = 'left';
+
+  if (fin.discount > 0) {
+    y += 24;
+    ctx.font = '14px "Plus Jakarta Sans", sans-serif';
+    ctx.fillStyle = '#475569';
+    ctx.fillText('Giảm giá / Ưu đãi', 40, y);
+    ctx.textAlign = 'right';
+    ctx.font = '14px monospace';
+    ctx.fillStyle = '#059669';
+    ctx.fillText(`-${fin.discount.toLocaleString('vi-VN')} đ`, width - 40, y);
+    ctx.textAlign = 'left';
+  }
+
+  y += 24;
+  ctx.font = '14px "Plus Jakarta Sans", sans-serif';
+  ctx.fillStyle = '#475569';
+  ctx.fillText('Phí giao hàng', 40, y);
+  ctx.textAlign = 'right';
+  ctx.font = '14px monospace';
+  ctx.fillStyle = '#0F172A';
+  ctx.fillText(
+    fin.shipCollected === 0 ? 'Miễn phí' : `${fin.shipCollected.toLocaleString('vi-VN')} đ`,
+    width - 40,
+    y
+  );
+  ctx.textAlign = 'left';
+
+  y += 36;
+  ctx.fillStyle = '#F8FAFC';
+  ctx.fillRect(40, y - 24, width - 80, 48);
+  ctx.fillStyle = '#0F172A';
+  ctx.font = 'bold 17px "Plus Jakarta Sans", sans-serif';
+  ctx.fillText('TỔNG THANH TOÁN', 56, y + 6);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#0F766E';
+  ctx.font = 'bold 20px monospace';
+  ctx.fillText(`${fin.customerPayable.toLocaleString('vi-VN')} đ`, width - 56, y + 7);
+  ctx.textAlign = 'left';
+
+  y += 46;
+  ctx.fillStyle = order.paymentStatus === 'paid' ? '#047857' : '#B45309';
+  ctx.font = 'bold 14px "Plus Jakarta Sans", sans-serif';
+  ctx.fillText(
+    order.paymentStatus === 'paid'
+      ? 'Trạng thái: ĐÃ THANH TOÁN'
+      : order.paymentMethod === 'cod'
+        ? 'Trạng thái: THU TIỀN MẶT KHI GIAO (COD)'
+        : 'Trạng thái: CHỜ CHUYỂN KHOẢN XÁC NHẬN',
+    40,
+    y
+  );
+
+  if (order.note) {
+    y += 28;
+    ctx.fillStyle = '#64748B';
+    ctx.font = '13px "Plus Jakarta Sans", sans-serif';
+    ctx.fillText(`Ghi chú: ${order.note.slice(0, 74)}`, 40, y);
+  }
+
+  const dataUrl = canvas.toDataURL('image/png');
+  const link = document.createElement('a');
+  link.href = dataUrl;
+  link.download = `hoa-don-${order.orderCode}.png`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
 export function exportSalesOrdersCSV(orders: SalesOrder[]): string {
   const headers = [
-    'Mã đơn',
-    'Ngày bán',
+    'Mã đơn ứng dụng',
+    'Đơn vị vận chuyển',
+    'Mã vận đơn ĐVVC',
+    'Ngày ghi nhận',
+    'Ngày hẹn giao',
+    'Khung giờ giao',
+    'Tên khách hàng',
+    'SĐT khách',
+    'Địa chỉ giao',
     'Nguồn online',
     'Khu vực ship',
-    'Khách hàng',
-    'Trạng thái',
+    'Nhóm khách',
+    'Thanh toán',
+    'Trạng thái thanh toán',
+    'Trạng thái giao vận',
     'Chi tiết món',
     'Tổng số lượng',
     'Tổng tiền món (Gross)',
@@ -711,27 +974,46 @@ export function exportSalesOrdersCSV(orders: SalesOrder[]): string {
     'Doanh thu thuần (Net)',
     'Thu ship khách',
     'Trả shipper',
+    'Tổng khách thanh toán',
+    'Lãi gộp thực tế',
     'Ghi chú',
   ];
   const lines = orders.map((o) => {
-    const gross = o.items.reduce((s, it) => s + it.unitPrice * it.quantity, 0);
-    const qty = o.items.reduce((s, it) => s + it.quantity, 0);
-    const net = o.status === 'cancelled' ? 0 : Math.max(0, gross - (o.discountAmount || 0));
+    const fin = getOrderFinancials(o);
     const detail = o.items.map((it) => `${it.name} x${it.quantity}`).join('; ');
+    const fStatus = getEffectiveFulfillmentStatus(o);
+    const fLabel: Record<string, string> = {
+      pending: 'Chờ xác nhận',
+      confirmed: 'Đã xác nhận',
+      delivering: 'Đang giao',
+      completed: 'Hoàn tất',
+      cancelled: 'Đã hủy',
+    };
     return [
       o.orderCode,
+      o.carrier || 'Tự giao',
+      o.carrierTrackingCode || '',
       o.date,
+      o.deliveryDate || o.date,
+      o.deliverySlot || '',
+      o.customerName || '',
+      o.customerPhone || '',
+      o.customerAddress || '',
       o.source,
       o.deliveryZone,
       o.customerSegment === 'new' ? 'Khách mới' : 'Khách quay lại',
-      o.status === 'completed' ? 'Hoàn tất' : 'Đã hủy / Hoàn',
+      o.paymentMethod === 'cod' ? 'Tiền mặt (COD)' : 'Chuyển khoản',
+      o.paymentStatus === 'unpaid' ? 'Chưa thanh toán' : 'Đã thanh toán',
+      fLabel[fStatus] || fStatus,
       detail,
-      String(qty),
-      String(Math.round(gross)),
-      String(Math.round(o.discountAmount || 0)),
-      String(Math.round(net)),
-      String(Math.round(o.shippingFeeCollected || 0)),
-      String(Math.round(o.shippingCostActual || 0)),
+      String(fin.totalUnits),
+      String(Math.round(fin.gross)),
+      String(Math.round(fin.discount)),
+      String(Math.round(fin.net)),
+      String(Math.round(fin.shipCollected)),
+      String(Math.round(fin.shipActual)),
+      String(Math.round(fin.customerPayable)),
+      String(Math.round(fin.grossProfit)),
       o.note || '',
     ];
   });

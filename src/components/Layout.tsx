@@ -6,6 +6,7 @@ import {
   BookOpen,
   Building2,
   Calculator,
+  ClipboardList,
   Cloud,
   CloudOff,
   HelpCircle,
@@ -59,6 +60,12 @@ const NAV_ITEMS: Array<{
     label: 'Doanh thu bán hàng',
     breadcrumb: 'Kinh doanh / Doanh thu bán hàng online & Tự giao ship',
     icon: TrendingUp,
+  },
+  {
+    id: 'sales-history',
+    label: 'Lịch sử bán hàng',
+    breadcrumb: 'Kinh doanh / Lịch sử bán hàng & Quản lý giao đơn',
+    icon: ClipboardList,
   },
   {
     id: 'recipes',

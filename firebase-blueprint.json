@@ -236,6 +236,7 @@
           "enum": [
             "Zalo / Tin nhắn",
             "Facebook / Messenger",
+            "Threads",
             "Website đặt trực tiếp",
             "Khách quen / Hotline"
           ]
@@ -260,6 +261,41 @@
         "shippingFeeCollected": { "type": "number" },
         "shippingCostActual": { "type": "number" },
         "note": { "type": "string", "maxLength": 500 },
+        "customerName": { "type": "string", "maxLength": 120 },
+        "customerPhone": { "type": "string", "maxLength": 30 },
+        "customerAddress": { "type": "string", "maxLength": 300 },
+        "deliveryDate": {
+          "type": "string",
+          "maxLength": 10,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+        },
+        "deliverySlot": { "type": "string", "maxLength": 40 },
+        "carrier": {
+          "type": "string",
+          "enum": [
+            "Tự giao",
+            "Xanh SM",
+            "Grab Express",
+            "Ahamove",
+            "Be Delivery",
+            "Lalamove",
+            "GHTK / GHN",
+            "Khác"
+          ]
+        },
+        "carrierTrackingCode": { "type": "string", "maxLength": 80 },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["transfer", "cod"]
+        },
+        "paymentStatus": {
+          "type": "string",
+          "enum": ["paid", "unpaid"]
+        },
+        "fulfillmentStatus": {
+          "type": "string",
+          "enum": ["pending", "confirmed", "delivering", "completed", "cancelled"]
+        },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },

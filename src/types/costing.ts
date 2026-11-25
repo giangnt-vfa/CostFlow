@@ -74,6 +74,7 @@ export interface MenuItem {
 export type OrderSource =
   | 'Zalo / Tin nhắn'
   | 'Facebook / Messenger'
+  | 'Threads'
   | 'Website đặt trực tiếp'
   | 'Khách quen / Hotline';
 
@@ -82,9 +83,28 @@ export type DeliveryZone =
   | 'Trung tâm (3–7km)'
   | 'Ngoại thành (>7km)';
 
+export type ShippingCarrier =
+  | 'Tự giao'
+  | 'Xanh SM'
+  | 'Grab Express'
+  | 'Ahamove'
+  | 'Be Delivery'
+  | 'Lalamove'
+  | 'GHTK / GHN'
+  | 'Khác';
+
 export type CustomerSegment = 'new' | 'returning';
 
 export type OrderStatus = 'completed' | 'cancelled';
+
+export type PaymentMethod = 'transfer' | 'cod';
+export type PaymentStatus = 'paid' | 'unpaid';
+export type FulfillmentStatus =
+  | 'pending'
+  | 'confirmed'
+  | 'delivering'
+  | 'completed'
+  | 'cancelled';
 
 export interface SalesOrderItem {
   menuItemId: string;
@@ -98,8 +118,8 @@ export interface SalesOrderItem {
 
 export interface SalesOrder {
   id: string;
-  orderCode: string;
-  date: string; // YYYY-MM-DD
+  orderCode: string; // Mã đơn online do ứng dụng tạo (VD: DH261125-001)
+  date: string; // YYYY-MM-DD (ngày ghi nhận đơn / ngày bán)
   source: OrderSource;
   deliveryZone: DeliveryZone;
   customerSegment: CustomerSegment;
@@ -109,6 +129,17 @@ export interface SalesOrder {
   shippingFeeCollected: number; // Phí ship thu khách
   shippingCostActual: number; // Phí ship thực trả shipper (phần bù ship = max(0, actual - collected))
   note: string;
+  // Thông tin vận hành giao hàng & đối soát (optional để tương thích dữ liệu cũ)
+  customerName?: string;
+  customerPhone?: string;
+  customerAddress?: string;
+  deliveryDate?: string; // YYYY-MM-DD (ngày hẹn giao; mặc định trùng date)
+  deliverySlot?: string; // Khung giờ giao (Giao ngay, Sáng, Chiều, Tối...)
+  carrier?: ShippingCarrier; // Đơn vị vận chuyển (Tự giao, Xanh SM, Grab Express, Ahamove...)
+  carrierTrackingCode?: string; // Mã vận đơn do ĐVVC cấp
+  paymentMethod?: PaymentMethod; // Chuyển khoản / COD
+  paymentStatus?: PaymentStatus; // Đã thanh toán / Chưa thanh toán
+  fulfillmentStatus?: FulfillmentStatus; // Trạng thái giao vận chi tiết
 }
 
 export type SalesTargetPeriod = 'day' | 'week' | 'month';
@@ -125,6 +156,7 @@ export interface SalesTargetConfig {
 export type WorkspaceTab =
   | 'dashboard'
   | 'sales'
+  | 'sales-history'
   | 'recipes'
   | 'catalog'
   | 'fixed-costs'
