@@ -11,6 +11,7 @@ import { FixedCostsView } from './components/FixedCostsView';
 import { Layout } from './components/Layout';
 import { MenuBoardView } from './components/MenuBoardView';
 import { RecipeCostingView } from './components/RecipeCostingView';
+import { SalesAnalyticsView } from './components/SalesAnalyticsView';
 import { useCostingStore } from './hooks/useCostingStore';
 import { WorkspaceTab } from './types/costing';
 
@@ -107,6 +108,20 @@ export default function App() {
             overheadSummary={store.overheadSummary}
             onOpenRecipe={handleOpenRecipe}
             onNavigateTab={(tab) => setActiveTab(tab)}
+          />
+        )}
+
+        {activeTab === 'sales' && (
+          <SalesAnalyticsView
+            salesOrders={store.salesOrders}
+            salesTarget={store.salesTarget}
+            menuItems={store.menuItems}
+            catalogMap={store.catalogMap}
+            totalMonthlyOverhead={store.overheadSummary.totalMonthlyOverhead}
+            onAddSalesOrder={store.addSalesOrder}
+            onUpdateSalesOrder={store.updateSalesOrder}
+            onDeleteSalesOrder={store.deleteSalesOrder}
+            onUpdateSalesTarget={store.updateSalesTarget}
           />
         )}
 

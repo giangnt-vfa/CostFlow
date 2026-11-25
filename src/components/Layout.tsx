@@ -15,6 +15,7 @@ import {
   Package,
   Plus,
   RotateCcw,
+  TrendingUp,
   UploadCloud,
   X,
 } from 'lucide-react';
@@ -54,6 +55,12 @@ const NAV_ITEMS: Array<{
     label: 'Tổng quan giá thành',
     breadcrumb: 'Bảng điều khiển / Tổng quan giá thành',
     icon: BarChart3,
+  },
+  {
+    id: 'sales',
+    label: 'Doanh thu bán hàng',
+    breadcrumb: 'Kinh doanh / Doanh thu bán hàng online & Tự giao ship',
+    icon: TrendingUp,
   },
   {
     id: 'recipes',

@@ -11,6 +11,7 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
+import { INITIAL_SALES_TARGET } from '../data/initialSalesData';
 import { OperationType, db, handleFirestoreError } from '../firebase';
 import {
   CatalogItem,
@@ -18,6 +19,9 @@ import {
   MenuItem,
   OverheadConfig,
   RecipeLineItem,
+  SalesOrder,
+  SalesOrderItem,
+  SalesTargetConfig,
 } from '../types/costing';
 
 export function sanitizeId(raw: string, fallbackPrefix = 'doc'): string {
@@ -46,11 +50,37 @@ function sanitizeLineItems(items: RecipeLineItem[] | undefined, maxLen: number):
   }));
 }
 
+function sanitizeSalesOrderItems(items: SalesOrderItem[] | undefined): SalesOrderItem[] {
+  if (!Array.isArray(items) || items.length === 0) {
+    return [
+      {
+        menuItemId: 'menu_1',
+        code: 'MN001',
+        name: 'Món bán',
+        category: 'Khác',
+        quantity: 1,
+        unitPrice: 0,
+        unitCogs: 0,
+      },
+    ];
+  }
+  return items.slice(0, 40).map((it, idx) => ({
+    menuItemId: sanitizeId(it.menuItemId || `menu_${idx}`),
+    code: clampString(it.code, 40, 'MN001'),
+    name: clampString(it.name, 200, 'Món bán'),
+    category: clampString(it.category, 100, 'Khác'),
+    quantity: clampNumber(it.quantity, 1, 10000, 1),
+    unitPrice: clampNumber(it.unitPrice, 0, 1000000000, 0),
+    unitCogs: clampNumber(it.unitCogs, 0, 1000000000, 0),
+  }));
+}
+
 export function buildWorkspacePayload(
   ownerId: string,
   config: OverheadConfig,
   btpSeeded = true,
-  isCreate = false
+  isCreate = false,
+  salesTarget?: SalesTargetConfig
 ) {
   const base: Record<string, unknown> = {
     ownerId,
@@ -61,6 +91,26 @@ export function buildWorkspacePayload(
     btpSeeded: Boolean(btpSeeded),
     updatedAt: serverTimestamp(),
   };
+  if (salesTarget) {
+    base.salesTargetPeriod =
+      salesTarget.period === 'day' || salesTarget.period === 'week' || salesTarget.period === 'month'
+        ? salesTarget.period
+        : 'month';
+    base.salesTargetMode = salesTarget.mode === 'units' ? 'units' : 'profit';
+    base.salesTargetMonthlyProfit = clampNumber(
+      salesTarget.targetMonthlyProfit,
+      0,
+      100000000000,
+      20000000
+    );
+    base.salesTargetMonthlyUnits = clampNumber(salesTarget.targetMonthlyUnits, 1, 10000000, 1600);
+    base.estimatedAppCommissionPct = clampNumber(
+      salesTarget.estimatedAppCommissionPct,
+      0,
+      60,
+      25
+    );
+  }
   if (isCreate) {
     base.createdAt = serverTimestamp();
   }
@@ -167,112 +217,281 @@ export function buildMenuItemPayload(
   return payload;
 }
 
+export function buildSalesOrderPayload(
+  ownerId: string,
+  order: Omit<SalesOrder, 'id'>,
+  isCreate = false
+) {
+  const validDate = /^\d{4}-\d{2}-\d{2}$/.test(order.date)
+    ? order.date
+    : new Date().toISOString().slice(0, 10);
+
+  const payload: Record<string, unknown> = {
+    ownerId,
+    orderCode: clampString(order.orderCode, 40, `DH-${Date.now().toString().slice(-5)}`),
+    date: validDate,
+    source: order.source,
+    deliveryZone: order.deliveryZone,
+    customerSegment: order.customerSegment === 'new' ? 'new' : 'returning',
+    status: order.status === 'cancelled' ? 'cancelled' : 'completed',
+    items: sanitizeSalesOrderItems(order.items),
+    discountAmount: clampNumber(order.discountAmount, 0, 1000000000, 0),
+    shippingFeeCollected: clampNumber(order.shippingFeeCollected, 0, 10000000, 0),
+    shippingCostActual: clampNumber(order.shippingCostActual, 0, 10000000, 0),
+    note: clampString(order.note, 500, ''),
+    updatedAt: serverTimestamp(),
+  };
+  if (isCreate) {
+    payload.createdAt = serverTimestamp();
+  }
+  return payload;
+}
+
+function isPermissionDenied(error: unknown): boolean {
+  const code = (error as { code?: string })?.code || '';
+  const msg = error instanceof Error ? error.message : String(error);
+  return (
+    code === 'permission-denied' ||
+    msg.includes('Missing or insufficient permissions') ||
+    msg.includes('PERMISSION_DENIED')
+  );
+}
+
+/**
+ * Firestore Security Rules cap `exists()`/`get()` calls at 20 per batched write.
+ * Because subcollection `create` rules check `hasWorkspace(userId)` via `exists()`,
+ * keep each batch <= 10 documents so we never hit the security rules access-call limit.
+ */
+async function commitChunkedOps(
+  ops: Array<(batch: ReturnType<typeof writeBatch>) => void>,
+  chunkSize = 10
+) {
+  if (!db || ops.length === 0) return;
+  for (let i = 0; i < ops.length; i += chunkSize) {
+    const batch = writeBatch(db);
+    for (const applyOp of ops.slice(i, i + chunkSize)) {
+      applyOp(batch);
+    }
+    await batch.commit();
+  }
+}
+
+export interface WorkspaceSeedResult {
+  seeded: boolean;
+  salesRulesUpdateRequired?: boolean;
+}
+
 export async function ensureUserWorkspaceSeeded(
   uid: string,
   seedData: {
     overheadConfig: OverheadConfig;
+    salesTarget: SalesTargetConfig;
     catalog: CatalogItem[];
     fixedCosts: FixedCostItem[];
     menuItems: MenuItem[];
+    salesOrders: SalesOrder[];
   }
-): Promise<boolean> {
-  if (!db) return false;
+): Promise<WorkspaceSeedResult> {
+  if (!db) return { seeded: false };
   const userPath = `users/${uid}`;
+  const userRef = doc(db, 'users', uid);
+
+  let snap;
   try {
-    const userRef = doc(db, 'users', uid);
-    const snap = await getDoc(userRef);
-    if (snap.exists()) {
-      return false;
+    snap = await getDoc(userRef);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, userPath);
+  }
+
+  if (snap.exists()) {
+    const existingData = snap.data();
+    // One-time upgrade for existing workspaces that don't yet have salesTarget / salesOrders
+    if (!('salesTargetPeriod' in existingData)) {
+      try {
+        const updateFields = buildWorkspacePayload(
+          uid,
+          seedData.overheadConfig,
+          true,
+          false,
+          seedData.salesTarget
+        );
+        delete updateFields.ownerId;
+        await updateDoc(userRef, updateFields);
+
+        const salesOps: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+        for (const order of seedData.salesOrders) {
+          const id = sanitizeId(order.id);
+          const { id: _ignore, ...rest } = order;
+          salesOps.push((b) =>
+            b.set(
+              doc(db!, 'users', uid, 'salesOrders', id),
+              buildSalesOrderPayload(uid, rest, true)
+            )
+          );
+        }
+        await commitChunkedOps(salesOps, 10);
+        return { seeded: true };
+      } catch (error) {
+        if (isPermissionDenied(error)) {
+          // Existing workspace works on older firestore.rules; let catalog/menu/fixedCosts keep syncing
+          // while prompting the user to publish the updated firestore.rules for salesOrders.
+          return { seeded: false, salesRulesUpdateRequired: true };
+        }
+        handleFirestoreError(error, OperationType.UPDATE, userPath);
+      }
     }
+    return { seeded: false };
+  }
 
-    const batch = writeBatch(db);
-    batch.set(userRef, buildWorkspacePayload(uid, seedData.overheadConfig, true, true));
+  // Brand-new workspace: create the root document FIRST so `exists(/users/{uid})` is true
+  // before any subcollection creates run (avoids double exists/existsAfter calls in batches).
+  try {
+    await setDoc(
+      userRef,
+      buildWorkspacePayload(uid, seedData.overheadConfig, true, true, seedData.salesTarget)
+    );
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, userPath);
+  }
 
-    for (const item of seedData.catalog) {
-      const id = sanitizeId(item.id);
-      const { id: _ignore, ...rest } = item;
-      batch.set(doc(db, 'users', uid, 'catalog', id), buildCatalogPayload(uid, rest, true));
-    }
+  const coreOps: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+  for (const item of seedData.catalog) {
+    const id = sanitizeId(item.id);
+    const { id: _ignore, ...rest } = item;
+    coreOps.push((b) =>
+      b.set(doc(db!, 'users', uid, 'catalog', id), buildCatalogPayload(uid, rest, true))
+    );
+  }
+  for (const fc of seedData.fixedCosts) {
+    const id = sanitizeId(fc.id);
+    const { id: _ignore, ...rest } = fc;
+    coreOps.push((b) =>
+      b.set(doc(db!, 'users', uid, 'fixedCosts', id), buildFixedCostPayload(uid, rest, true))
+    );
+  }
+  for (const menu of seedData.menuItems) {
+    const id = sanitizeId(menu.id);
+    const { id: _ignore, ...rest } = menu;
+    coreOps.push((b) =>
+      b.set(doc(db!, 'users', uid, 'menuItems', id), buildMenuItemPayload(uid, rest, true))
+    );
+  }
 
-    for (const fc of seedData.fixedCosts) {
-      const id = sanitizeId(fc.id);
-      const { id: _ignore, ...rest } = fc;
-      batch.set(doc(db, 'users', uid, 'fixedCosts', id), buildFixedCostPayload(uid, rest, true));
-    }
-
-    for (const menu of seedData.menuItems) {
-      const id = sanitizeId(menu.id);
-      const { id: _ignore, ...rest } = menu;
-      batch.set(doc(db, 'users', uid, 'menuItems', id), buildMenuItemPayload(uid, rest, true));
-    }
-
-    await batch.commit();
-    return true;
+  try {
+    await commitChunkedOps(coreOps, 10);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, userPath);
   }
+
+  const salesOps: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+  for (const order of seedData.salesOrders) {
+    const id = sanitizeId(order.id);
+    const { id: _ignore, ...rest } = order;
+    salesOps.push((b) =>
+      b.set(doc(db!, 'users', uid, 'salesOrders', id), buildSalesOrderPayload(uid, rest, true))
+    );
+  }
+
+  try {
+    await commitChunkedOps(salesOps, 10);
+  } catch (error) {
+    if (isPermissionDenied(error)) {
+      return { seeded: true, salesRulesUpdateRequired: true };
+    }
+    handleFirestoreError(error, OperationType.CREATE, `users/${uid}/salesOrders`);
+  }
+
+  return { seeded: true };
 }
 
 export async function replaceWorkspaceInFirestore(
   uid: string,
-  existingIds: { catalogIds: string[]; fixedCostIds: string[]; menuIds: string[] },
+  existingIds: {
+    catalogIds: string[];
+    fixedCostIds: string[];
+    menuIds: string[];
+    salesOrderIds: string[];
+  },
   seedData: {
     overheadConfig: OverheadConfig;
+    salesTarget: SalesTargetConfig;
     catalog: CatalogItem[];
     fixedCosts: FixedCostItem[];
     menuItems: MenuItem[];
+    salesOrders: SalesOrder[];
   }
 ) {
   if (!db) return;
   const userPath = `users/${uid}`;
+  const userRef = doc(db, 'users', uid);
   try {
-    const userRef = doc(db, 'users', uid);
     const snap = await getDoc(userRef);
 
-    const ops: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
-
+    // 1. Update or create root workspace document FIRST
     if (snap.exists()) {
-      const updateFields = buildWorkspacePayload(uid, seedData.overheadConfig, true, false);
+      const updateFields = buildWorkspacePayload(
+        uid,
+        seedData.overheadConfig,
+        true,
+        false,
+        seedData.salesTarget
+      );
       delete updateFields.ownerId;
-      ops.push((b) => b.update(userRef, updateFields));
+      await updateDoc(userRef, updateFields);
     } else {
-      ops.push((b) => b.set(userRef, buildWorkspacePayload(uid, seedData.overheadConfig, true, true)));
+      await setDoc(
+        userRef,
+        buildWorkspacePayload(uid, seedData.overheadConfig, true, true, seedData.salesTarget)
+      );
     }
 
+    // 2. Delete stale subcollection docs (delete rules don't call exists(), so larger chunks are safe)
+    const deleteOps: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
     for (const id of existingIds.catalogIds) {
-      ops.push((b) => b.delete(doc(db!, 'users', uid, 'catalog', sanitizeId(id))));
+      deleteOps.push((b) => b.delete(doc(db!, 'users', uid, 'catalog', sanitizeId(id))));
     }
     for (const id of existingIds.fixedCostIds) {
-      ops.push((b) => b.delete(doc(db!, 'users', uid, 'fixedCosts', sanitizeId(id))));
+      deleteOps.push((b) => b.delete(doc(db!, 'users', uid, 'fixedCosts', sanitizeId(id))));
     }
     for (const id of existingIds.menuIds) {
-      ops.push((b) => b.delete(doc(db!, 'users', uid, 'menuItems', sanitizeId(id))));
+      deleteOps.push((b) => b.delete(doc(db!, 'users', uid, 'menuItems', sanitizeId(id))));
     }
+    for (const id of existingIds.salesOrderIds) {
+      deleteOps.push((b) => b.delete(doc(db!, 'users', uid, 'salesOrders', sanitizeId(id))));
+    }
+    await commitChunkedOps(deleteOps, 100);
 
+    // 3. Re-create subcollection docs in chunks of 10 (respects 20 exists() calls/batch limit)
+    const createOps: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
     for (const item of seedData.catalog) {
       const id = sanitizeId(item.id);
       const { id: _ignore, ...rest } = item;
-      ops.push((b) => b.set(doc(db!, 'users', uid, 'catalog', id), buildCatalogPayload(uid, rest, true)));
+      createOps.push((b) =>
+        b.set(doc(db!, 'users', uid, 'catalog', id), buildCatalogPayload(uid, rest, true))
+      );
     }
     for (const fc of seedData.fixedCosts) {
       const id = sanitizeId(fc.id);
       const { id: _ignore, ...rest } = fc;
-      ops.push((b) => b.set(doc(db!, 'users', uid, 'fixedCosts', id), buildFixedCostPayload(uid, rest, true)));
+      createOps.push((b) =>
+        b.set(doc(db!, 'users', uid, 'fixedCosts', id), buildFixedCostPayload(uid, rest, true))
+      );
     }
     for (const menu of seedData.menuItems) {
       const id = sanitizeId(menu.id);
       const { id: _ignore, ...rest } = menu;
-      ops.push((b) => b.set(doc(db!, 'users', uid, 'menuItems', id), buildMenuItemPayload(uid, rest, true)));
+      createOps.push((b) =>
+        b.set(doc(db!, 'users', uid, 'menuItems', id), buildMenuItemPayload(uid, rest, true))
+      );
     }
-
-    const CHUNK_SIZE = 400;
-    for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
-      const batch = writeBatch(db);
-      for (const applyOp of ops.slice(i, i + CHUNK_SIZE)) {
-        applyOp(batch);
-      }
-      await batch.commit();
+    for (const order of seedData.salesOrders) {
+      const id = sanitizeId(order.id);
+      const { id: _ignore, ...rest } = order;
+      createOps.push((b) =>
+        b.set(doc(db!, 'users', uid, 'salesOrders', id), buildSalesOrderPayload(uid, rest, true))
+      );
     }
+    await commitChunkedOps(createOps, 10);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, userPath);
   }
@@ -281,10 +500,13 @@ export async function replaceWorkspaceInFirestore(
 export function subscribeToUserWorkspace(
   uid: string,
   callbacks: {
-    onOverheadConfig: (config: OverheadConfig) => void;
+    onWorkspaceSettings: (config: OverheadConfig, salesTarget?: SalesTargetConfig) => void;
     onCatalog: (items: CatalogItem[]) => void;
     onFixedCosts: (items: FixedCostItem[]) => void;
     onMenuItems: (items: MenuItem[]) => void;
+    onSalesOrders: (orders: SalesOrder[]) => void;
+    onSalesSyncError?: (err: Error) => void;
+    skipSalesOrders?: boolean;
     onError: (err: Error) => void;
   }
 ): () => void {
@@ -294,18 +516,44 @@ export function subscribeToUserWorkspace(
   const catalogPath = `users/${uid}/catalog`;
   const fixedCostsPath = `users/${uid}/fixedCosts`;
   const menuPath = `users/${uid}/menuItems`;
+  const salesOrdersPath = `users/${uid}/salesOrders`;
 
   const unsubUser = onSnapshot(
     doc(db, 'users', uid),
     (snap) => {
       if (!snap.exists()) return;
       const d = snap.data();
-      callbacks.onOverheadConfig({
+      const config: OverheadConfig = {
         projectedMonthlyUnits: Number(d.projectedMonthlyUnits) || 1800,
         includeCcdcDepreciation: Boolean(d.includeCcdcDepreciation),
         defaultTargetFoodCostPct: Number(d.defaultTargetFoodCostPct) || 30,
         defaultPlatformFeePct: Number(d.defaultPlatformFeePct) || 0,
-      });
+      };
+      const target: SalesTargetConfig | undefined =
+        'salesTargetPeriod' in d || 'salesTargetMonthlyProfit' in d
+          ? {
+              period:
+                d.salesTargetPeriod === 'day' ||
+                d.salesTargetPeriod === 'week' ||
+                d.salesTargetPeriod === 'month'
+                  ? d.salesTargetPeriod
+                  : INITIAL_SALES_TARGET.period,
+              mode: d.salesTargetMode === 'units' ? 'units' : 'profit',
+              targetMonthlyProfit:
+                typeof d.salesTargetMonthlyProfit === 'number'
+                  ? d.salesTargetMonthlyProfit
+                  : INITIAL_SALES_TARGET.targetMonthlyProfit,
+              targetMonthlyUnits:
+                typeof d.salesTargetMonthlyUnits === 'number'
+                  ? d.salesTargetMonthlyUnits
+                  : INITIAL_SALES_TARGET.targetMonthlyUnits,
+              estimatedAppCommissionPct:
+                typeof d.estimatedAppCommissionPct === 'number'
+                  ? d.estimatedAppCommissionPct
+                  : INITIAL_SALES_TARGET.estimatedAppCommissionPct,
+            }
+          : undefined;
+      callbacks.onWorkspaceSettings(config, target);
     },
     (err) => {
       try {
@@ -414,11 +662,50 @@ export function subscribeToUserWorkspace(
     }
   );
 
+  const unsubSales = callbacks.skipSalesOrders
+    ? () => {}
+    : onSnapshot(
+        query(collection(db, salesOrdersPath), where('ownerId', '==', uid)),
+        (snap) => {
+          const list: SalesOrder[] = snap.docs.map((docSnap) => {
+            const d = docSnap.data();
+            return {
+              id: docSnap.id,
+              orderCode: String(d.orderCode || docSnap.id),
+              date: String(d.date || ''),
+              source: d.source,
+              deliveryZone: d.deliveryZone,
+              customerSegment: d.customerSegment === 'new' ? 'new' : 'returning',
+              status: d.status === 'cancelled' ? 'cancelled' : 'completed',
+              items: Array.isArray(d.items) ? d.items : [],
+              discountAmount: Number(d.discountAmount) || 0,
+              shippingFeeCollected: Number(d.shippingFeeCollected) || 0,
+              shippingCostActual: Number(d.shippingCostActual) || 0,
+              note: String(d.note || ''),
+            };
+          });
+          list.sort((a, b) => b.date.localeCompare(a.date) || b.orderCode.localeCompare(a.orderCode));
+          callbacks.onSalesOrders(list);
+        },
+        (err) => {
+          try {
+            handleFirestoreError(err, OperationType.LIST, salesOrdersPath);
+          } catch (wrapped) {
+            if (callbacks.onSalesSyncError) {
+              callbacks.onSalesSyncError(wrapped as Error);
+            } else {
+              callbacks.onError(wrapped as Error);
+            }
+          }
+        }
+      );
+
   return () => {
     unsubUser();
     unsubCatalog();
     unsubFixed();
     unsubMenu();
+    unsubSales();
   };
 }
 

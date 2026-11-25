@@ -56,6 +56,11 @@ service cloud.firestore {
           'defaultTargetFoodCostPct',
           'defaultPlatformFeePct',
           'btpSeeded',
+          'salesTargetPeriod',
+          'salesTargetMode',
+          'salesTargetMonthlyProfit',
+          'salesTargetMonthlyUnits',
+          'estimatedAppCommissionPct',
           'createdAt',
           'updatedAt'
         ])
@@ -72,6 +77,11 @@ service cloud.firestore {
         && data.defaultPlatformFeePct >= 0
         && data.defaultPlatformFeePct <= 80
         && data.btpSeeded is bool
+        && (!('salesTargetPeriod' in data) || (data.salesTargetPeriod is string && data.salesTargetPeriod in ['day', 'week', 'month']))
+        && (!('salesTargetMode' in data) || (data.salesTargetMode is string && data.salesTargetMode in ['profit', 'units']))
+        && (!('salesTargetMonthlyProfit' in data) || (data.salesTargetMonthlyProfit is number && data.salesTargetMonthlyProfit >= 0 && data.salesTargetMonthlyProfit <= 100000000000))
+        && (!('salesTargetMonthlyUnits' in data) || (data.salesTargetMonthlyUnits is number && data.salesTargetMonthlyUnits >= 1 && data.salesTargetMonthlyUnits <= 10000000))
+        && (!('estimatedAppCommissionPct' in data) || (data.estimatedAppCommissionPct is number && data.estimatedAppCommissionPct >= 0 && data.estimatedAppCommissionPct <= 60))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -234,6 +244,59 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidSalesOrder(data, userId) {
+      return data.keys().hasAll([
+          'ownerId',
+          'orderCode',
+          'date',
+          'source',
+          'deliveryZone',
+          'customerSegment',
+          'status',
+          'items',
+          'discountAmount',
+          'shippingFeeCollected',
+          'shippingCostActual',
+          'note',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'orderCode',
+          'date',
+          'source',
+          'deliveryZone',
+          'customerSegment',
+          'status',
+          'items',
+          'discountAmount',
+          'shippingFeeCollected',
+          'shippingCostActual',
+          'note',
+          'createdAt',
+          'updatedAt'
+        ])
+        && isValidId(data.ownerId)
+        && data.ownerId == userId
+        && data.orderCode is string && data.orderCode.size() >= 1 && data.orderCode.size() <= 40
+        && data.date is string && data.date.size() == 10 && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
+        && data.source is string
+        && data.source in ['Zalo / Tin nhắn', 'Facebook / Messenger', 'Website đặt trực tiếp', 'Khách quen / Hotline']
+        && data.deliveryZone is string
+        && data.deliveryZone in ['Nội thành (<3km)', 'Trung tâm (3–7km)', 'Ngoại thành (>7km)']
+        && data.customerSegment is string && data.customerSegment in ['new', 'returning']
+        && data.status is string && data.status in ['completed', 'cancelled']
+        && data.items is list && data.items.size() >= 1 && data.items.size() <= 40
+        && data.items[0] is map
+        && data.discountAmount is number && data.discountAmount >= 0 && data.discountAmount <= 1000000000
+        && data.shippingFeeCollected is number && data.shippingFeeCollected >= 0 && data.shippingFeeCollected <= 10000000
+        && data.shippingCostActual is number && data.shippingCostActual >= 0 && data.shippingCostActual <= 10000000
+        && data.note is string && data.note.size() <= 500
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // User Workspace Root
     match /users/{userId} {
       allow get: if isValidId(userId) && isOwner(userId);
@@ -255,6 +318,11 @@ service cloud.firestore {
           'defaultTargetFoodCostPct',
           'defaultPlatformFeePct',
           'btpSeeded',
+          'salesTargetPeriod',
+          'salesTargetMode',
+          'salesTargetMonthlyProfit',
+          'salesTargetMonthlyUnits',
+          'estimatedAppCommissionPct',
           'updatedAt'
         ]);
       allow delete: if false;
@@ -363,6 +431,41 @@ service cloud.firestore {
             'updatedAt'
           ]);
         allow delete: if isValidId(userId) && isValidId(menuId) && isOwner(userId);
+      }
+
+      // Direct Online Sales Orders Subcollection
+      match /salesOrders/{orderId} {
+        allow get: if isValidId(userId) && isValidId(orderId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && existing().ownerId == request.auth.uid;
+        allow create: if isValidId(userId)
+          && isValidId(orderId)
+          && isOwner(userId)
+          && isValidSalesOrder(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && hasWorkspace(userId);
+        allow update: if isValidId(userId)
+          && isValidId(orderId)
+          && isOwner(userId)
+          && isValidSalesOrder(incoming(), userId)
+          && incoming().ownerId == existing().ownerId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'orderCode',
+            'date',
+            'source',
+            'deliveryZone',
+            'customerSegment',
+            'status',
+            'items',
+            'discountAmount',
+            'shippingFeeCollected',
+            'shippingCostActual',
+            'note',
+            'updatedAt'
+          ]);
+        allow delete: if isValidId(userId) && isValidId(orderId) && isOwner(userId);
       }
     }
   }

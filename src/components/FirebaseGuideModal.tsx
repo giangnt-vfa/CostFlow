@@ -1,5 +1,6 @@
-import React from 'react';
-import { X } from 'lucide-react';
+import React, { useState } from 'react';
+import { Check, ChevronDown, ChevronUp, Copy, X } from 'lucide-react';
+import firestoreRulesRaw from '../../firestore.rules?raw';
 
 interface FirebaseGuideModalProps {
   open: boolean;
@@ -16,9 +17,22 @@ export function FirebaseGuideModal({
   projectId,
   databaseId = '(default)',
 }: FirebaseGuideModalProps) {
+  const [copiedRules, setCopiedRules] = useState(false);
+  const [showRulesCode, setShowRulesCode] = useState(false);
+
   if (!open) return null;
 
   const currentHost = typeof window !== 'undefined' ? window.location.hostname : '';
+
+  const handleCopyRules = async () => {
+    try {
+      await navigator.clipboard.writeText(firestoreRulesRaw);
+      setCopiedRules(true);
+      setTimeout(() => setCopiedRules(false), 2500);
+    } catch {
+      setShowRulesCode(true);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50">
@@ -155,11 +169,54 @@ VITE_FIREBASE_DATABASE_ID=""`}
               <li>/users/&#123;userId&#125;/catalog/&#123;itemId&#125; — Nguyên vật liệu, Bán thành phẩm, Bao bì, CCDC</li>
               <li>/users/&#123;userId&#125;/fixedCosts/&#123;costId&#125; — Chi phí cố định &amp; mặt bằng</li>
               <li>/users/&#123;userId&#125;/menuItems/&#123;menuId&#125; — Món ăn, định lượng công thức &amp; giá bán</li>
+              <li>/users/&#123;userId&#125;/salesOrders/&#123;orderId&#125; — Nhật ký đơn bán hàng online &amp; phân tích doanh thu</li>
             </ul>
             <p className="text-xs text-slate-600">
-              Sao chép nội dung tệp <code className="font-mono-num bg-slate-100 px-1 py-0.5 rounded">firestore.rules</code> ở thư mục gốc vào mục{' '}
-              <strong>Firestore Database → Rules</strong> và nhấn <strong>Publish</strong>.
+              Dán toàn bộ nội dung <code className="font-mono-num bg-slate-100 px-1 py-0.5 rounded">firestore.rules</code> bên dưới vào{' '}
+              <strong>Firebase Console → Firestore Database → Rules</strong> rồi nhấn{' '}
+              <strong>Publish</strong>:
             </p>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => void handleCopyRules()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-teal-700 hover:bg-teal-800 text-white rounded-md transition-colors"
+              >
+                {copiedRules ? (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Đã sao chép firestore.rules</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Sao chép toàn bộ firestore.rules</span>
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowRulesCode((v) => !v)}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors"
+              >
+                {showRulesCode ? (
+                  <>
+                    <ChevronUp className="w-3.5 h-3.5" />
+                    <span>Ẩn mã Rules</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="w-3.5 h-3.5" />
+                    <span>Xem mã Rules</span>
+                  </>
+                )}
+              </button>
+            </div>
+            {showRulesCode && (
+              <pre className="p-3 bg-slate-900 text-slate-100 rounded-lg text-[11px] font-mono-num overflow-x-auto max-h-64 overflow-y-auto">
+                {firestoreRulesRaw}
+              </pre>
+            )}
           </section>
         </div>
 

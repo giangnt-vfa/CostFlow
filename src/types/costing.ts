@@ -71,4 +71,61 @@ export interface MenuItem {
   isOnMenu: boolean;
 }
 
-export type WorkspaceTab = 'dashboard' | 'recipes' | 'catalog' | 'fixed-costs' | 'menu-board';
+export type OrderSource =
+  | 'Zalo / Tin nhắn'
+  | 'Facebook / Messenger'
+  | 'Website đặt trực tiếp'
+  | 'Khách quen / Hotline';
+
+export type DeliveryZone =
+  | 'Nội thành (<3km)'
+  | 'Trung tâm (3–7km)'
+  | 'Ngoại thành (>7km)';
+
+export type CustomerSegment = 'new' | 'returning';
+
+export type OrderStatus = 'completed' | 'cancelled';
+
+export interface SalesOrderItem {
+  menuItemId: string;
+  code: string;
+  name: string;
+  category: string;
+  quantity: number;
+  unitPrice: number;
+  unitCogs: number; // Giá vốn trực tiếp (NVL + Bao bì) tại thời điểm bán
+}
+
+export interface SalesOrder {
+  id: string;
+  orderCode: string;
+  date: string; // YYYY-MM-DD
+  source: OrderSource;
+  deliveryZone: DeliveryZone;
+  customerSegment: CustomerSegment;
+  status: OrderStatus;
+  items: SalesOrderItem[];
+  discountAmount: number; // Khuyến mãi / Giảm giá đơn
+  shippingFeeCollected: number; // Phí ship thu khách
+  shippingCostActual: number; // Phí ship thực trả shipper (phần bù ship = max(0, actual - collected))
+  note: string;
+}
+
+export type SalesTargetPeriod = 'day' | 'week' | 'month';
+export type SalesTargetMode = 'profit' | 'units';
+
+export interface SalesTargetConfig {
+  period: SalesTargetPeriod;
+  mode: SalesTargetMode;
+  targetMonthlyProfit: number; // Lợi nhuận ròng mục tiêu quy đổi theo tháng (VNĐ)
+  targetMonthlyUnits: number; // Sản lượng mục tiêu quy đổi theo tháng (phần/ly)
+  estimatedAppCommissionPct: number; // % Chiết khấu sàn tham chiếu để tính tiền tiết kiệm (mặc định 25%)
+}
+
+export type WorkspaceTab =
+  | 'dashboard'
+  | 'sales'
+  | 'recipes'
+  | 'catalog'
+  | 'fixed-costs'
+  | 'menu-board';

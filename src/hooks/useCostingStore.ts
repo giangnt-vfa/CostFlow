@@ -7,6 +7,7 @@ import {
   INITIAL_MENU_ITEMS,
   INITIAL_OVERHEAD_CONFIG,
 } from '../data/initialData';
+import { INITIAL_SALES_TARGET, generateInitialSalesOrders } from '../data/initialSalesData';
 import {
   auth,
   googleProvider,
@@ -15,11 +16,19 @@ import {
   subscribeConnectionWarning,
   testConnection,
 } from '../firebase';
-import { CatalogItem, FixedCostItem, MenuItem, OverheadConfig } from '../types/costing';
+import {
+  CatalogItem,
+  FixedCostItem,
+  MenuItem,
+  OverheadConfig,
+  SalesOrder,
+  SalesTargetConfig,
+} from '../types/costing';
 import {
   buildCatalogPayload,
   buildFixedCostPayload,
   buildMenuItemPayload,
+  buildSalesOrderPayload,
   buildWorkspacePayload,
   ensureUserWorkspaceSeeded,
   firestoreCreateDoc,
@@ -38,22 +47,50 @@ interface StoredWorkspace {
   fixedCosts: FixedCostItem[];
   overheadConfig: OverheadConfig;
   menuItems: MenuItem[];
+  salesOrders: SalesOrder[];
+  salesTarget: SalesTargetConfig;
   btpSeeded?: boolean;
+  salesSeeded?: boolean;
 }
 
 export type CloudSyncStatus = 'local' | 'connecting' | 'synced' | 'error';
+
+const RULES_PUBLISH_MESSAGE =
+  'Firestore từ chối quyền truy cập (Missing or insufficient permissions). Hãy bấm "Xem hướng dẫn" → sao chép toàn bộ firestore.rules mới nhất vào Firebase Console → Firestore Database → Rules và bấm Publish, sau đó nhấn "Thử kết nối lại".';
+
+const SALES_RULES_UPGRADE_MESSAGE =
+  'Dữ liệu công thức & nguyên liệu đã đồng bộ, nhưng tab Doanh thu bán hàng cần cập nhật firestore.rules mới (bổ sung bảng salesOrders & mục tiêu doanh thu). Hãy bấm "Xem hướng dẫn" để sao chép firestore.rules mới vào Firebase Console → Firestore Database → Rules → Publish rồi nhấn "Thử kết nối lại".';
+
+function formatSyncErrorMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes('Quota exceeded')) {
+    return 'Đã vượt hạn mức đọc/ghi miễn phí hôm nay của Firestore. Hạn mức sẽ tự đặt lại vào ngày mai.';
+  }
+  if (msg.includes('Missing or insufficient permissions') || msg.includes('PERMISSION_DENIED')) {
+    return RULES_PUBLISH_MESSAGE;
+  }
+  return msg;
+}
+
+function buildDefaultWorkspace(): StoredWorkspace {
+  const catMap = new Map(INITIAL_CATALOG.map((c) => [c.id, c]));
+  return {
+    catalog: INITIAL_CATALOG,
+    fixedCosts: INITIAL_FIXED_COSTS,
+    overheadConfig: INITIAL_OVERHEAD_CONFIG,
+    menuItems: INITIAL_MENU_ITEMS,
+    salesOrders: generateInitialSalesOrders(INITIAL_MENU_ITEMS, catMap),
+    salesTarget: INITIAL_SALES_TARGET,
+    btpSeeded: true,
+    salesSeeded: true,
+  };
+}
 
 function loadWorkspace(): StoredWorkspace {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      return {
-        catalog: INITIAL_CATALOG,
-        fixedCosts: INITIAL_FIXED_COSTS,
-        overheadConfig: INITIAL_OVERHEAD_CONFIG,
-        menuItems: INITIAL_MENU_ITEMS,
-        btpSeeded: true,
-      };
+      return buildDefaultWorkspace();
     }
     const parsed = JSON.parse(raw) as Partial<StoredWorkspace>;
     let catalog =
@@ -76,6 +113,16 @@ function loadWorkspace(): StoredWorkspace {
       }
     }
 
+    const catMap = new Map(catalog.map((c) => [c.id, c]));
+    const salesOrders =
+      Array.isArray(parsed.salesOrders) && (parsed.salesSeeded || parsed.salesOrders.length > 0)
+        ? parsed.salesOrders
+        : generateInitialSalesOrders(menuItems, catMap);
+
+    const salesTarget: SalesTargetConfig = parsed.salesTarget
+      ? { ...INITIAL_SALES_TARGET, ...parsed.salesTarget }
+      : INITIAL_SALES_TARGET;
+
     return {
       catalog,
       fixedCosts: Array.isArray(parsed.fixedCosts) ? parsed.fixedCosts : INITIAL_FIXED_COSTS,
@@ -83,16 +130,13 @@ function loadWorkspace(): StoredWorkspace {
         ? { ...INITIAL_OVERHEAD_CONFIG, ...parsed.overheadConfig }
         : INITIAL_OVERHEAD_CONFIG,
       menuItems,
+      salesOrders,
+      salesTarget,
       btpSeeded: true,
+      salesSeeded: true,
     };
   } catch {
-    return {
-      catalog: INITIAL_CATALOG,
-      fixedCosts: INITIAL_FIXED_COSTS,
-      overheadConfig: INITIAL_OVERHEAD_CONFIG,
-      menuItems: INITIAL_MENU_ITEMS,
-      btpSeeded: true,
-    };
+    return buildDefaultWorkspace();
   }
 }
 
@@ -154,18 +198,29 @@ export function useCostingStore() {
 
     const initAndSubscribe = async () => {
       try {
-        await ensureUserWorkspaceSeeded(user.uid, {
+        const seedResult = await ensureUserWorkspaceSeeded(user.uid, {
           overheadConfig: workspaceRef.current.overheadConfig,
+          salesTarget: workspaceRef.current.salesTarget,
           catalog: workspaceRef.current.catalog,
           fixedCosts: workspaceRef.current.fixedCosts,
           menuItems: workspaceRef.current.menuItems,
+          salesOrders: workspaceRef.current.salesOrders,
         });
 
         if (cancelled) return;
 
+        if (seedResult.salesRulesUpdateRequired) {
+          setSyncError(SALES_RULES_UPGRADE_MESSAGE);
+        }
+
         unsubFirestore = subscribeToUserWorkspace(user.uid, {
-          onOverheadConfig: (config) => {
-            setWorkspace((prev) => ({ ...prev, overheadConfig: config }));
+          skipSalesOrders: Boolean(seedResult.salesRulesUpdateRequired),
+          onWorkspaceSettings: (config, target) => {
+            setWorkspace((prev) => ({
+              ...prev,
+              overheadConfig: config,
+              salesTarget: target ? { ...prev.salesTarget, ...target } : prev.salesTarget,
+            }));
             setSyncStatus('synced');
           },
           onCatalog: (catalog) => {
@@ -180,19 +235,30 @@ export function useCostingStore() {
             setWorkspace((prev) => ({ ...prev, menuItems }));
             setSyncStatus('synced');
           },
+          onSalesOrders: (salesOrders) => {
+            setWorkspace((prev) => ({ ...prev, salesOrders, salesSeeded: true }));
+            setSyncStatus('synced');
+          },
+          onSalesSyncError: (err) => {
+            const msg = err.message;
+            if (
+              msg.includes('Missing or insufficient permissions') ||
+              msg.includes('PERMISSION_DENIED')
+            ) {
+              setSyncError(SALES_RULES_UPGRADE_MESSAGE);
+            } else {
+              setSyncError(formatSyncErrorMessage(err));
+            }
+          },
           onError: (err) => {
             setSyncStatus('error');
-            setSyncError(
-              err.message.includes('Quota exceeded')
-                ? 'Đã vượt hạn mức đọc/ghi miễn phí hôm nay của Firestore. Hạn mức sẽ tự đặt lại vào ngày mai.'
-                : err.message
-            );
+            setSyncError(formatSyncErrorMessage(err));
           },
         });
       } catch (err) {
         if (cancelled) return;
         setSyncStatus('error');
-        setSyncError(err instanceof Error ? err.message : String(err));
+        setSyncError(formatSyncErrorMessage(err));
       }
     };
 
@@ -250,13 +316,14 @@ export function useCostingStore() {
           catalogIds: workspaceRef.current.catalog.map((c) => c.id),
           fixedCostIds: workspaceRef.current.fixedCosts.map((f) => f.id),
           menuIds: workspaceRef.current.menuItems.map((m) => m.id),
+          salesOrderIds: workspaceRef.current.salesOrders.map((o) => o.id),
         },
         localSnapshot
       );
       setSyncStatus('synced');
     } catch (err) {
       setSyncStatus('error');
-      setSyncError(err instanceof Error ? err.message : String(err));
+      setSyncError(formatSyncErrorMessage(err));
     }
   }, [user]);
 
@@ -291,7 +358,7 @@ export function useCostingStore() {
         void firestoreCreateDoc(
           ['users', user.uid, 'catalog', id],
           buildCatalogPayload(user.uid, item, true)
-        ).catch((err) => setSyncError(err instanceof Error ? err.message : String(err)));
+        ).catch((err) => setSyncError(formatSyncErrorMessage(err)));
       }
       return newItem;
     },
@@ -312,7 +379,7 @@ export function useCostingStore() {
         const payload = buildCatalogPayload(user.uid, rest, false);
         delete payload.ownerId;
         void firestoreUpdateDoc(['users', user.uid, 'catalog', sanitizeId(id)], payload).catch(
-          (err) => setSyncError(err instanceof Error ? err.message : String(err))
+          (err) => setSyncError(formatSyncErrorMessage(err))
         );
       }
     },
@@ -352,7 +419,7 @@ export function useCostingStore() {
 
       if (user) {
         void firestoreDeleteDoc(['users', user.uid, 'catalog', sanitizeId(id)]).catch((err) =>
-          setSyncError(err instanceof Error ? err.message : String(err))
+          setSyncError(formatSyncErrorMessage(err))
         );
         for (const btp of affectedBtps) {
           const nextSubs = (btp.subIngredients || []).filter((l) => l.catalogItemId !== id);
@@ -403,14 +470,17 @@ export function useCostingStore() {
             catalogIds: prevCatalog.map((c) => c.id),
             fixedCostIds: workspaceRef.current.fixedCosts.map((f) => f.id),
             menuIds: workspaceRef.current.menuItems.map((m) => m.id),
+            salesOrderIds: workspaceRef.current.salesOrders.map((o) => o.id),
           },
           {
             overheadConfig: workspaceRef.current.overheadConfig,
+            salesTarget: workspaceRef.current.salesTarget,
             catalog: nextCatalog,
             fixedCosts: workspaceRef.current.fixedCosts,
             menuItems: workspaceRef.current.menuItems,
+            salesOrders: workspaceRef.current.salesOrders,
           }
-        ).catch((err) => setSyncError(err instanceof Error ? err.message : String(err)));
+        ).catch((err) => setSyncError(formatSyncErrorMessage(err)));
       }
     },
     [user]
@@ -429,7 +499,7 @@ export function useCostingStore() {
         void firestoreCreateDoc(
           ['users', user.uid, 'fixedCosts', id],
           buildFixedCostPayload(user.uid, item, true)
-        ).catch((err) => setSyncError(err instanceof Error ? err.message : String(err)));
+        ).catch((err) => setSyncError(formatSyncErrorMessage(err)));
       }
     },
     [user]
@@ -449,7 +519,7 @@ export function useCostingStore() {
         const payload = buildFixedCostPayload(user.uid, rest, false);
         delete payload.ownerId;
         void firestoreUpdateDoc(['users', user.uid, 'fixedCosts', sanitizeId(id)], payload).catch(
-          (err) => setSyncError(err instanceof Error ? err.message : String(err))
+          (err) => setSyncError(formatSyncErrorMessage(err))
         );
       }
     },
@@ -464,7 +534,7 @@ export function useCostingStore() {
       }));
       if (user) {
         void firestoreDeleteDoc(['users', user.uid, 'fixedCosts', sanitizeId(id)]).catch((err) =>
-          setSyncError(err instanceof Error ? err.message : String(err))
+          setSyncError(formatSyncErrorMessage(err))
         );
       }
     },
@@ -479,10 +549,40 @@ export function useCostingStore() {
         overheadConfig: merged,
       }));
       if (user) {
-        const payload = buildWorkspacePayload(user.uid, merged, true, false);
+        const payload = buildWorkspacePayload(
+          user.uid,
+          merged,
+          true,
+          false,
+          workspaceRef.current.salesTarget
+        );
         delete payload.ownerId;
         void firestoreUpdateDoc(['users', user.uid], payload).catch((err) =>
-          setSyncError(err instanceof Error ? err.message : String(err))
+          setSyncError(formatSyncErrorMessage(err))
+        );
+      }
+    },
+    [user]
+  );
+
+  const updateSalesTarget = useCallback(
+    (patch: Partial<SalesTargetConfig>) => {
+      const merged = { ...workspaceRef.current.salesTarget, ...patch };
+      setWorkspace((prev) => ({
+        ...prev,
+        salesTarget: merged,
+      }));
+      if (user) {
+        const payload = buildWorkspacePayload(
+          user.uid,
+          workspaceRef.current.overheadConfig,
+          true,
+          false,
+          merged
+        );
+        delete payload.ownerId;
+        void firestoreUpdateDoc(['users', user.uid], payload).catch((err) =>
+          setSyncError(formatSyncErrorMessage(err))
         );
       }
     },
@@ -502,7 +602,7 @@ export function useCostingStore() {
         void firestoreCreateDoc(
           ['users', user.uid, 'menuItems', id],
           buildMenuItemPayload(user.uid, item, true)
-        ).catch((err) => setSyncError(err instanceof Error ? err.message : String(err)));
+        ).catch((err) => setSyncError(formatSyncErrorMessage(err)));
       }
       return newItem;
     },
@@ -523,7 +623,7 @@ export function useCostingStore() {
         const payload = buildMenuItemPayload(user.uid, rest, false);
         delete payload.ownerId;
         void firestoreUpdateDoc(['users', user.uid, 'menuItems', sanitizeId(id)], payload).catch(
-          (err) => setSyncError(err instanceof Error ? err.message : String(err))
+          (err) => setSyncError(formatSyncErrorMessage(err))
         );
       }
     },
@@ -558,7 +658,7 @@ export function useCostingStore() {
         void firestoreCreateDoc(
           ['users', user.uid, 'menuItems', createdId],
           buildMenuItemPayload(user.uid, rest, true)
-        ).catch((err) => setSyncError(err instanceof Error ? err.message : String(err)));
+        ).catch((err) => setSyncError(formatSyncErrorMessage(err)));
       }
       return createdId;
     },
@@ -573,7 +673,67 @@ export function useCostingStore() {
       }));
       if (user) {
         void firestoreDeleteDoc(['users', user.uid, 'menuItems', sanitizeId(id)]).catch((err) =>
-          setSyncError(err instanceof Error ? err.message : String(err))
+          setSyncError(formatSyncErrorMessage(err))
+        );
+      }
+    },
+    [user]
+  );
+
+  // Sales Orders CRUD
+  const addSalesOrder = useCallback(
+    (order: Omit<SalesOrder, 'id'>) => {
+      const id = sanitizeId(`ord_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`);
+      const created: SalesOrder = { ...order, id };
+      setWorkspace((prev) => ({
+        ...prev,
+        salesOrders: [created, ...prev.salesOrders].sort(
+          (a, b) => b.date.localeCompare(a.date) || b.orderCode.localeCompare(a.orderCode)
+        ),
+      }));
+      if (user) {
+        void firestoreCreateDoc(
+          ['users', user.uid, 'salesOrders', id],
+          buildSalesOrderPayload(user.uid, order, true)
+        ).catch((err) => setSyncError(formatSyncErrorMessage(err)));
+      }
+      return created;
+    },
+    [user]
+  );
+
+  const updateSalesOrder = useCallback(
+    (id: string, patch: Partial<SalesOrder>) => {
+      const existing = workspaceRef.current.salesOrders.find((o) => o.id === id);
+      if (!existing) return;
+      const merged: SalesOrder = { ...existing, ...patch };
+      setWorkspace((prev) => ({
+        ...prev,
+        salesOrders: prev.salesOrders
+          .map((o) => (o.id === id ? merged : o))
+          .sort((a, b) => b.date.localeCompare(a.date) || b.orderCode.localeCompare(a.orderCode)),
+      }));
+      if (user) {
+        const { id: _ignore, ...rest } = merged;
+        const payload = buildSalesOrderPayload(user.uid, rest, false);
+        delete payload.ownerId;
+        void firestoreUpdateDoc(['users', user.uid, 'salesOrders', sanitizeId(id)], payload).catch(
+          (err) => setSyncError(formatSyncErrorMessage(err))
+        );
+      }
+    },
+    [user]
+  );
+
+  const deleteSalesOrder = useCallback(
+    (id: string) => {
+      setWorkspace((prev) => ({
+        ...prev,
+        salesOrders: prev.salesOrders.filter((o) => o.id !== id),
+      }));
+      if (user) {
+        void firestoreDeleteDoc(['users', user.uid, 'salesOrders', sanitizeId(id)]).catch((err) =>
+          setSyncError(formatSyncErrorMessage(err))
         );
       }
     },
@@ -581,22 +741,17 @@ export function useCostingStore() {
   );
 
   const resetToDefaultData = useCallback(() => {
-    const fresh: StoredWorkspace = {
-      catalog: INITIAL_CATALOG,
-      fixedCosts: INITIAL_FIXED_COSTS,
-      overheadConfig: INITIAL_OVERHEAD_CONFIG,
-      menuItems: INITIAL_MENU_ITEMS,
-      btpSeeded: true,
-    };
+    const fresh = buildDefaultWorkspace();
     const prevIds = {
       catalogIds: workspaceRef.current.catalog.map((c) => c.id),
       fixedCostIds: workspaceRef.current.fixedCosts.map((f) => f.id),
       menuIds: workspaceRef.current.menuItems.map((m) => m.id),
+      salesOrderIds: workspaceRef.current.salesOrders.map((o) => o.id),
     };
     setWorkspace(fresh);
     if (user) {
       void replaceWorkspaceInFirestore(user.uid, prevIds, fresh).catch((err) =>
-        setSyncError(err instanceof Error ? err.message : String(err))
+        setSyncError(formatSyncErrorMessage(err))
       );
     }
   }, [user]);
@@ -608,6 +763,8 @@ export function useCostingStore() {
     overheadConfig: workspace.overheadConfig,
     overheadSummary,
     menuItems: workspace.menuItems,
+    salesOrders: workspace.salesOrders,
+    salesTarget: workspace.salesTarget,
     // Firebase auth & sync state
     isFirebaseConfigured,
     firebaseProjectId: resolvedFirebaseConfig?.projectId || null,
@@ -629,10 +786,14 @@ export function useCostingStore() {
     updateFixedCost,
     deleteFixedCost,
     updateOverheadConfig,
+    updateSalesTarget,
     addMenuItem,
     updateMenuItem,
     duplicateMenuItem,
     deleteMenuItem,
+    addSalesOrder,
+    updateSalesOrder,
+    deleteSalesOrder,
     resetToDefaultData,
   };
 }

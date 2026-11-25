@@ -32,6 +32,28 @@
           "type": "boolean",
           "description": "Đã khởi tạo dữ liệu mẫu Bán thành phẩm"
         },
+        "salesTargetPeriod": {
+          "type": "string",
+          "enum": ["day", "week", "month"],
+          "description": "Chu kỳ hiển thị mục tiêu bán hàng"
+        },
+        "salesTargetMode": {
+          "type": "string",
+          "enum": ["profit", "units"],
+          "description": "Chế độ đặt mục tiêu theo lợi nhuận hoặc sản lượng"
+        },
+        "salesTargetMonthlyProfit": {
+          "type": "number",
+          "description": "Mục tiêu lợi nhuận ròng theo tháng (VNĐ)"
+        },
+        "salesTargetMonthlyUnits": {
+          "type": "number",
+          "description": "Mục tiêu sản lượng bán ra theo tháng (phần/ly)"
+        },
+        "estimatedAppCommissionPct": {
+          "type": "number",
+          "description": "Tỉ lệ chiết khấu sàn tham chiếu (%)"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -190,12 +212,79 @@
         "createdAt",
         "updatedAt"
       ]
+    },
+    "SalesOrder": {
+      "title": "SalesOrder",
+      "description": "Đơn bán hàng online tự tạo và tự phân phối giao ship.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "orderCode": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "date": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "Zalo / Tin nhắn",
+            "Facebook / Messenger",
+            "Website đặt trực tiếp",
+            "Khách quen / Hotline"
+          ]
+        },
+        "deliveryZone": {
+          "type": "string",
+          "enum": ["Nội thành (<3km)", "Trung tâm (3–7km)", "Ngoại thành (>7km)"]
+        },
+        "customerSegment": {
+          "type": "string",
+          "enum": ["new", "returning"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["completed", "cancelled"]
+        },
+        "items": {
+          "type": "array",
+          "description": "Danh sách món trong đơn (tối đa 40 dòng)"
+        },
+        "discountAmount": { "type": "number" },
+        "shippingFeeCollected": { "type": "number" },
+        "shippingCostActual": { "type": "number" },
+        "note": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "ownerId",
+        "orderCode",
+        "date",
+        "source",
+        "deliveryZone",
+        "customerSegment",
+        "status",
+        "items",
+        "discountAmount",
+        "shippingFeeCollected",
+        "shippingCostActual",
+        "note",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserWorkspace" },
-      "description": "Lưu cấu hình tổng thể và thông số phân bổ chi phí cố định của từng người dùng."
+      "description": "Lưu cấu hình tổng thể, phân bổ chi phí cố định và mục tiêu doanh thu/lợi nhuận của từng người dùng."
     },
     "/users/{userId}/catalog/{itemId}": {
       "schema": { "$ref": "#/entities/CatalogItem" },
@@ -208,6 +297,10 @@
     "/users/{userId}/menuItems/{menuId}": {
       "schema": { "$ref": "#/entities/MenuItem" },
       "description": "Lưu danh sách món trên menu và định lượng công thức tính giá thành."
+    },
+    "/users/{userId}/salesOrders/{orderId}": {
+      "schema": { "$ref": "#/entities/SalesOrder" },
+      "description": "Lưu nhật ký đơn bán hàng online tự tạo và tự giao ship để phân tích doanh thu."
     }
   }
 }
