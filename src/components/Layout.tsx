@@ -13,7 +13,6 @@ import {
   LogOut,
   Menu as MenuIcon,
   Package,
-  Plus,
   RotateCcw,
   TrendingUp,
   UploadCloud,
@@ -26,7 +25,6 @@ import { formatVND } from '../utils/formatters';
 interface LayoutProps {
   activeTab: WorkspaceTab;
   onSelectTab: (tab: WorkspaceTab) => void;
-  onCreateNewDish: () => void;
   onResetData: () => void;
   totalMonthlyOverhead: number;
   overheadPerUnit: number;
@@ -91,7 +89,6 @@ const NAV_ITEMS: Array<{
 export function Layout({
   activeTab,
   onSelectTab,
-  onCreateNewDish,
   onResetData,
   totalMonthlyOverhead,
   overheadPerUnit,
@@ -404,17 +401,6 @@ export function Layout({
             <div className="text-sm text-slate-500 truncate">
               {currentNav.breadcrumb}
             </div>
-          </div>
-
-          <div className="flex items-center gap-3 shrink-0">
-            <button
-              type="button"
-              onClick={onCreateNewDish}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white text-sm font-medium rounded-lg transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 focus-visible:ring-offset-2"
-            >
-              <Plus className="w-4 h-4 shrink-0" />
-              <span>Tạo món mới</span>
-            </button>
           </div>
         </header>
 

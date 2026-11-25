@@ -80,7 +80,6 @@ export default function App() {
       <Layout
         activeTab={activeTab}
         onSelectTab={setActiveTab}
-        onCreateNewDish={handleCreateNewDish}
         onResetData={() => {
           store.resetToDefaultData();
           setSelectedMenuId('menu_1');
